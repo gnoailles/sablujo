@@ -24,12 +24,12 @@ struct color
     float B;
 };
 
-internal uint32_t ColorToUInt32(color Color)
+internal_func uint32_t ColorToUInt32(color Color)
 {
     return (uint32_t)(uint8_t(Color.R * 255) << 16 | uint8_t(Color.G * 255) << 8 | uint8_t(Color.B * 255));
 }
 
-internal void ClearBuffer(game_offscreen_buffer* Buffer)
+internal_func void ClearBuffer(game_offscreen_buffer* Buffer)
 {
     Assert(Buffer->Height * Buffer->Width % 2 == 0);
 
@@ -41,7 +41,7 @@ internal void ClearBuffer(game_offscreen_buffer* Buffer)
     }
 }
 
-internal void RenderRectangle(game_offscreen_buffer* Buffer, 
+internal_func void RenderRectangle(game_offscreen_buffer* Buffer, 
                               vector2u Min, vector2u Max,
                               color Color)
 {
@@ -56,7 +56,7 @@ internal void RenderRectangle(game_offscreen_buffer* Buffer,
     }
 }
 
-internal void InitializeCamera(camera* Camera, int32_t ImageWidth, int32_t ImageHeight)
+internal_func void InitializeCamera(camera* Camera, int32_t ImageWidth, int32_t ImageHeight)
 {
     float FOV = 90.0f; 
     float Near = 0.1f; 
@@ -111,40 +111,57 @@ internal void InitializeCamera(camera* Camera, int32_t ImageWidth, int32_t Image
 
 float EdgeFunction(vector2 A, vector2 B, vector2 C)
 {
-    return (C.X - A.X) * (B.Y - A.Y) - (C.Y - A.Y) * (B.X - A.X);
+    return (B.X - A.X) * (C.Y - A.Y) - (B.Y - A.Y) * (C.X - A.X);
 }
     
-internal void 
+internal_func void 
 RasterizeRegion(game_offscreen_buffer* Buffer, 
                 int32_t StartWidth, int32_t StartHeight,
                 int32_t EndWidth, int32_t EndHeight,
                 vector2 V0, vector2 V1, vector2 V2)
 {
-    for (int32_t j = StartHeight; j < EndHeight; ++j) 
+    float A01 = V0.Y - V1.Y, B01 = V1.X - V0.X;
+    float A12 = V1.Y - V2.Y, B12 = V2.X - V1.X;
+    float A20 = V2.Y - V0.Y, B20 = V0.X - V2.X;
+
+    vector2 P = { (float)StartWidth, (float)StartHeight };
+    float w0_row = EdgeFunction(V1, V2, P);
+    float w1_row = EdgeFunction(V2, V0, P);
+    float w2_row = EdgeFunction(V0, V1, P);
+
+    for (int32_t j = StartHeight; j <= EndHeight; ++j) 
     { 
-        for (int32_t i = StartWidth; i < EndWidth; ++i) 
-        { 
-            vector2 p = {i + 0.5f, j + 0.5f}; 
-            float w0 = EdgeFunction(V1, V2, p); 
-            float w1 = EdgeFunction(V2, V0, p); 
-            float w2 = EdgeFunction(V0, V1, p); 
+          // Barycentric coordinates at start of row
+        float w0 = w0_row;
+        float w1 = w1_row;
+        float w2 = w2_row;
+        for (int32_t i = StartWidth; i <= EndWidth; ++i) 
+        {
             if (w0 >= 0 && w1 >= 0 && w2 >= 0) 
             { 
                 float Area = EdgeFunction(V0, V1, V2);
-                w0 /= Area; 
-                w1 /= Area; 
-                w2 /= Area; 
                 color c0 = { 1.0f, 0.0f, 0.0f };
                 color c1 = { 0.0f, 1.0f, 0.0f };
                 color c2 = { 0.0f, 0.0f, 1.0f };
 
+                // color EndColor = {1.0f, 0.0f, 0.0f};
                 color EndColor;
                 EndColor.R = w0 * c0.R + w1 * c1.R + w2 * c2.R; 
                 EndColor.G = w0 * c0.G + w1 * c1.G + w2 * c2.G; 
                 EndColor.B = w0 * c0.B + w1 * c1.B + w2 * c2.B; 
+
                 ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i] = ColorToUInt32(EndColor); 
-            } 
+            }
+             // One step to the right
+            w0 += A12;
+            w1 += A20;
+            w2 += A01;
         }
+        
+        // One row step
+        w0_row += B12;
+        w1_row += B20;
+        w2_row += B01;
     }
 }
 
@@ -183,7 +200,7 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     Translation.val[2][2] = 1.0f;
     Translation.val[3][3] = 1.0f;
     Translation.val[3][1] = 0.5f;
-    Translation.val[3][2] = -2.5f;
+    Translation.val[3][2] = -5.0f;
 
     Camera->World = multMatrixMatrix(&Rotation, &Translation);
     GameState->YRot += 2.5f;
@@ -201,7 +218,7 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
             // convert to raster space and mark the position of the vertex in the image with a simple dot
             uint32_t x = MIN((uint32_t)Buffer->Width - 1, (uint32_t)((ProjectedVertex.X + 1) * 0.5 * Buffer->Width)); 
             uint32_t y = MIN((uint32_t)Buffer->Height - 1, (uint32_t)((1 - (ProjectedVertex.Y + 1) * 0.5) * Buffer->Height)); 
-            // ((uint32_t*)Buffer->Memory)[y * Buffer->Width + x] = 0xFFFFFFFF;
+            ((uint32_t*)Buffer->Memory)[y * Buffer->Width + x] = 0xFFFFFFFF;
 
             TriangleVertices[j] = {(float)x, (float)y};
         }
