@@ -24,7 +24,7 @@ Win32GetLastWriteTime(char *Filename)
     return(LastWriteTime);
 }
 
-internal_func win32_game_code
+internal win32_game_code
 Win32LoadGameCode(char *SourceDLLName, char *TempDLLName)
 {
     win32_game_code Result = {};
@@ -38,7 +38,7 @@ Win32LoadGameCode(char *SourceDLLName, char *TempDLLName)
     return Result;
 }
 
-internal_func void
+internal void
 Win32UnloadGameCode(win32_game_code* GameCode)
 {
     if(GameCode->GameDLL)
@@ -48,7 +48,7 @@ Win32UnloadGameCode(win32_game_code* GameCode)
     GameCode->UpdateAndRender = 0;
 }
 
-internal_func win32_window_dimension
+internal win32_window_dimension
 Win32GetWindowDimension(HWND Window)
 {
     win32_window_dimension Result;
@@ -59,7 +59,7 @@ Win32GetWindowDimension(HWND Window)
     return Result;
 }
 
-internal_func void 
+internal void 
 Win32ResizeDIBSection(win32_offscreen_buffer* Buffer, int32_t Width, int32_t Height)
 {
 
@@ -85,7 +85,7 @@ Win32ResizeDIBSection(win32_offscreen_buffer* Buffer, int32_t Width, int32_t Hei
     Buffer->Memory = VirtualAlloc(0, BackBufferMemorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 }
 
-internal_func void
+internal void
 Win32UpdateWindow(HDC DeviceContext, 
                   int32_t WindowWidth, int32_t WindowHeight, 
                   win32_offscreen_buffer Buffer)
@@ -168,7 +168,7 @@ MainWindowCallback(HWND Window,
     return Result;
 }
 
-internal_func void
+internal void
 CatStrings(size_t SourceACount, char *SourceA,
            size_t SourceBCount, char *SourceB,
            size_t DestCount, char *Dest)

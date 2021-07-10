@@ -24,12 +24,12 @@ struct color
     float B;
 };
 
-internal_func uint32_t ColorToUInt32(color Color)
+internal uint32_t ColorToUInt32(color Color)
 {
     return (uint32_t)(uint8_t(Color.R * 255) << 16 | uint8_t(Color.G * 255) << 8 | uint8_t(Color.B * 255));
 }
 
-internal_func void ClearBuffer(game_offscreen_buffer* Buffer)
+internal void ClearBuffer(game_offscreen_buffer* Buffer)
 {
     Assert(Buffer->Height * Buffer->Width % 2 == 0);
 
@@ -41,7 +41,7 @@ internal_func void ClearBuffer(game_offscreen_buffer* Buffer)
     }
 }
 
-internal_func void RenderRectangle(game_offscreen_buffer* Buffer, 
+internal void RenderRectangle(game_offscreen_buffer* Buffer, 
                               vector2u Min, vector2u Max,
                               color Color)
 {
@@ -56,7 +56,7 @@ internal_func void RenderRectangle(game_offscreen_buffer* Buffer,
     }
 }
 
-internal_func void InitializeCamera(camera* Camera, int32_t ImageWidth, int32_t ImageHeight)
+internal void InitializeCamera(camera* Camera, int32_t ImageWidth, int32_t ImageHeight)
 {
     float FOV = 90.0f; 
     float Near = 0.1f; 
@@ -108,60 +108,108 @@ internal_func void InitializeCamera(camera* Camera, int32_t ImageWidth, int32_t 
     Camera->World = multMatrixMatrix(&Rotation, &Camera->World);
 }
 
+struct edge {
+    // Dimensions of our pixel group
+    static const int StepXSize = 4;
+    static const int StepYSize = 1;
+
+    vector4i OneStepX;
+    vector4i OneStepY;
+};
+
+vector4i InitEdge(edge* Edge, const vector2i& V0, const vector2i&V1, const vector2i& Origin)
+{
+    // Edge setup
+    int32_t A = V0.Y - V1.Y;
+    int32_t B = V1.X - V0.X;
+    int32_t C = V0.X * V1.Y - V0.Y * V1.X;
+
+    // Step deltas
+    Edge->OneStepX = vector4i{A * edge::StepXSize, A * edge::StepXSize, A * edge::StepXSize, A * edge::StepXSize};
+    Edge->OneStepY = vector4i{B * edge::StepYSize, B * edge::StepYSize, B * edge::StepYSize, B * edge::StepYSize};
+
+    // x/y values for initial pixel block
+    vector4i x = vector4i{Origin.X, Origin.X + 1, Origin.X + 2, Origin.X + 3};
+    vector4i y = vector4i{Origin.Y, Origin.Y, Origin.Y, Origin.Y};
+
+    // Edge function values at origin
+    return A * x + B * y + vector4i{C,C,C,C};
+}
+
+
+int32_t EdgeFunction(vector2i A, vector2i B, vector2i C)
+{
+    return (B.X - A.X) * (C.Y - A.Y) - (B.Y - A.Y) * (C.X - A.X);
+}
 
 float EdgeFunction(vector2 A, vector2 B, vector2 C)
 {
     return (B.X - A.X) * (C.Y - A.Y) - (B.Y - A.Y) * (C.X - A.X);
 }
     
-internal_func void 
+internal void 
 RasterizeRegion(game_offscreen_buffer* Buffer, 
                 int32_t StartWidth, int32_t StartHeight,
                 int32_t EndWidth, int32_t EndHeight,
-                vector2 V0, vector2 V1, vector2 V2)
+                vector2i V0, vector2i V1, vector2i V2)
 {
-    float A01 = V0.Y - V1.Y, B01 = V1.X - V0.X;
-    float A12 = V1.Y - V2.Y, B12 = V2.X - V1.X;
-    float A20 = V2.Y - V0.Y, B20 = V0.X - V2.X;
+    vector2i P = { StartWidth, StartHeight };
 
-    vector2 P = { (float)StartWidth, (float)StartHeight };
-    float w0_row = EdgeFunction(V1, V2, P);
-    float w1_row = EdgeFunction(V2, V0, P);
-    float w2_row = EdgeFunction(V0, V1, P);
+    edge E01, E12, E20;
+    vector4i w0_row = InitEdge(&E12, V1, V2, P);
+    vector4i w1_row = InitEdge(&E20, V2, V0, P);
+    vector4i w2_row = InitEdge(&E01, V0, V1, P);
 
-    for (int32_t j = StartHeight; j <= EndHeight; ++j) 
+    for (int32_t j = StartHeight; j <= EndHeight; j += edge::StepYSize) 
     { 
           // Barycentric coordinates at start of row
-        float w0 = w0_row;
-        float w1 = w1_row;
-        float w2 = w2_row;
-        for (int32_t i = StartWidth; i <= EndWidth; ++i) 
+        vector4i w0 = w0_row;
+        vector4i w1 = w1_row;
+        vector4i w2 = w2_row;
+        for (int32_t i = StartWidth; i <= EndWidth; i += edge::StepXSize) 
         {
-            if (w0 >= 0 && w1 >= 0 && w2 >= 0) 
+            vector4i mask = {};
+            mask.vec = _mm_cmplt_epi32(mask.vec, _mm_or_si128(_mm_or_si128(w0.vec, w1.vec),w2.vec));
+            if (!_mm_test_all_zeros(mask.vec, mask.vec)) 
             { 
-                float Area = EdgeFunction(V0, V1, V2);
-                color c0 = { 1.0f, 0.0f, 0.0f };
-                color c1 = { 0.0f, 1.0f, 0.0f };
-                color c2 = { 0.0f, 0.0f, 1.0f };
+                // uint32_t Area = EdgeFunction(V0, V1, V2);
+                // color c0 = { 1.0f, 0.0f, 0.0f };
+                // color c1 = { 0.0f, 1.0f, 0.0f };
+                // color c2 = { 0.0f, 0.0f, 1.0f };
 
-                // color EndColor = {1.0f, 0.0f, 0.0f};
-                color EndColor;
-                EndColor.R = w0 * c0.R + w1 * c1.R + w2 * c2.R; 
-                EndColor.G = w0 * c0.G + w1 * c1.G + w2 * c2.G; 
-                EndColor.B = w0 * c0.B + w1 * c1.B + w2 * c2.B; 
-
-                ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i] = ColorToUInt32(EndColor); 
+                color EndColor = {1.0f, 0.0f, 0.0f};
+                // color EndColor;
+                // EndColor.R = w0 * c0.R + w1 * c1.R + w2 * c2.R; 
+                // EndColor.G = w0 * c0.G + w1 * c1.G + w2 * c2.G; 
+                // EndColor.B = w0 * c0.B + w1 * c1.B + w2 * c2.B; 
+                // ColorToUInt32(EndColor)
+                if(mask.X)
+                {
+                    ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i] = 0x00FF0000; 
+                }
+                if(mask.Y)
+                {
+                    ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i + 1] = 0x00FF0000; 
+                }
+                if(mask.Z)
+                {
+                    ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i + 2] = 0x00FF0000; 
+                }
+                if(mask.W)
+                {
+                    ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i + 3] = 0x00FF0000; 
+                }
             }
              // One step to the right
-            w0 += A12;
-            w1 += A20;
-            w2 += A01;
+            w0.vec = _mm_add_epi32(w0.vec, E12.OneStepX.vec);
+            w1.vec = _mm_add_epi32(w1.vec, E20.OneStepX.vec);
+            w2.vec = _mm_add_epi32(w2.vec, E01.OneStepX.vec);
         }
         
         // One row step
-        w0_row += B12;
-        w1_row += B20;
-        w2_row += B01;
+        w0_row.vec = _mm_add_epi32(w0_row.vec, E12.OneStepY.vec);
+        w1_row.vec = _mm_add_epi32(w1_row.vec, E20.OneStepY.vec);
+        w2_row.vec = _mm_add_epi32(w2_row.vec, E01.OneStepY.vec);
     }
 }
 
@@ -203,34 +251,33 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     Translation.val[3][2] = -5.0f;
 
     Camera->World = multMatrixMatrix(&Rotation, &Translation);
-    GameState->YRot += 2.5f;
+    GameState->YRot += .5f;
 
 
     for (uint32_t i = 0; i < CubeNumVertices; i+=3) 
     {
         
-        vector2 TriangleVertices[3];
+        vector2i TriangleVertices[3];
         for (uint32_t j = 0; j < 3; j++) 
         {
             vector3 CameraSpaceVertex = multVecMatrix(&Camera->World, &CubeVertices[i + j]);
             vector3 ProjectedVertex = multVecMatrix(&Camera->PerspectiveProjection, &CameraSpaceVertex);
 
             // convert to raster space and mark the position of the vertex in the image with a simple dot
-            uint32_t x = MIN((uint32_t)Buffer->Width - 1, (uint32_t)((ProjectedVertex.X + 1) * 0.5 * Buffer->Width)); 
-            uint32_t y = MIN((uint32_t)Buffer->Height - 1, (uint32_t)((1 - (ProjectedVertex.Y + 1) * 0.5) * Buffer->Height)); 
-            ((uint32_t*)Buffer->Memory)[y * Buffer->Width + x] = 0xFFFFFFFF;
+            int32_t x = MIN(Buffer->Width - 1, (int32_t)((ProjectedVertex.X + 1) * 0.5f * Buffer->Width));
+            int32_t y = MIN(Buffer->Height - 1, (int32_t)((1 - (ProjectedVertex.Y + 1) * 0.5f) * Buffer->Height));
 
-            TriangleVertices[j] = {(float)x, (float)y};
+            TriangleVertices[j] = {x, y};
         }
 
-        vector2 V0 = TriangleVertices[0];
-        vector2 V1 = TriangleVertices[1];
-        vector2 V2 = TriangleVertices[2];
+        vector2i V0 = TriangleVertices[0];
+        vector2i V1 = TriangleVertices[1];
+        vector2i V2 = TriangleVertices[2];
 
-        int32_t MinX = (int32_t)MIN(V0.X, MIN(V1.X, V2.X));
-        int32_t MinY = (int32_t)MIN(V0.Y, MIN(V1.Y, V2.Y));
-        int32_t MaxX = (int32_t)MAX(V0.X, MAX(V1.X, V2.X));
-        int32_t MaxY = (int32_t)MAX(V0.Y, MAX(V1.Y, V2.Y));
+        int32_t MinX = MIN(V0.X, MIN(V1.X, V2.X));
+        int32_t MinY = MIN(V0.Y, MIN(V1.Y, V2.Y));
+        int32_t MaxX = MAX(V0.X, MAX(V1.X, V2.X));
+        int32_t MaxY = MAX(V0.Y, MAX(V1.Y, V2.Y));
 
         // Clip against screen bounds
         MinX = MAX(MinX, 0);
@@ -238,6 +285,28 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
         MaxX = MIN(MaxX, Buffer->Width - 1);
         MaxY = MIN(MaxY, Buffer->Height - 1);
         RasterizeRegion(Buffer, MinX, MinY, MaxX, MaxY, V0, V1, V2);
+        // ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + V0.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + V1.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + V2.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + V0.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + V1.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + V2.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
+        
+        // ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + V0.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + V1.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + V2.X] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
+        // ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
     }
 
 

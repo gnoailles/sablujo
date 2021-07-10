@@ -14,7 +14,7 @@
 20.66ms/f, 48.40FPS,  72.32Mc/f
 21.08ms/f, 47.45FPS,  73.77Mc/f
 
-
+// Optimized edge stepping
 1.96ms/f, 509.61FPS,  6.87Mc/f
 2.33ms/f, 428.38FPS,  8.17Mc/f
 1.94ms/f, 514.43FPS,  6.80Mc/f
@@ -37,3 +37,66 @@
 1.86ms/f, 537.81FPS,  6.51Mc/f
 2.00ms/f, 500.23FPS,  7.00Mc/f
 2.29ms/f, 436.11FPS,  8.03Mc/f
+
+
+Process pixels 4x1
+2.22ms/f, 451.22FPS,  7.76Mc/f
+2.25ms/f, 443.85FPS,  7.89Mc/f
+2.32ms/f, 431.52FPS,  8.11Mc/f
+3.24ms/f, 308.56FPS,  11.34Mc/f
+2.00ms/f, 501.18FPS,  6.98Mc/f
+2.23ms/f, 448.11FPS,  7.81Mc/f
+1.94ms/f, 514.83FPS,  6.80Mc/f
+1.98ms/f, 504.57FPS,  6.94Mc/f
+2.52ms/f, 396.09FPS,  8.84Mc/f
+2.15ms/f, 465.29FPS,  7.52Mc/f
+1.86ms/f, 537.98FPS,  6.51Mc/f
+1.91ms/f, 522.55FPS,  6.70Mc/f
+1.86ms/f, 539.08FPS,  6.49Mc/f
+2.16ms/f, 462.98FPS,  7.56Mc/f
+2.03ms/f, 493.78FPS,  7.09Mc/f
+2.01ms/f, 497.83FPS,  7.03Mc/f
+
+
+SIMD 4x1
+1.71ms/f, 583.43FPS,  6.00Mc/f
+1.72ms/f, 581.16FPS,  6.02Mc/f
+2.46ms/f, 406.97FPS,  8.60Mc/f
+1.72ms/f, 582.95FPS,  6.00Mc/f
+1.73ms/f, 576.67FPS,  6.07Mc/f
+2.39ms/f, 417.82FPS,  8.38Mc/f
+1.75ms/f, 572.93FPS,  6.11Mc/f
+1.83ms/f, 545.82FPS,  6.41Mc/f
+2.61ms/f, 383.72FPS,  9.12Mc/f
+2.03ms/f, 491.91FPS,  7.12Mc/f
+1.80ms/f, 554.20FPS,  6.32Mc/f
+1.87ms/f, 536.11FPS,  6.53Mc/f
+1.76ms/f, 566.57FPS,  6.18Mc/f
+1.74ms/f, 574.58FPS,  6.09Mc/f
+2.35ms/f, 425.59FPS,  8.22Mc/f
+1.75ms/f, 572.28FPS,  6.12Mc/f
+1.77ms/f, 565.26FPS,  6.19Mc/f
+1.81ms/f, 551.88FPS,  6.34Mc/f
+1.87ms/f, 536.08FPS,  6.53Mc/f
+1.83ms/f, 547.71FPS,  6.39Mc/f
+2.68ms/f, 373.30FPS,  9.38Mc/f
+1.77ms/f, 565.77FPS,  6.19Mc/f
+1.82ms/f, 550.12FPS,  6.36Mc/f
+
+
+SIMD 4x1 -- -Ox
+1.23ms/f, 811.49FPS,  4.31Mc/f
+1.30ms/f, 770.59FPS,  4.54Mc/f
+1.22ms/f, 820.14FPS,  4.27Mc/f
+1.25ms/f, 801.73FPS,  4.37Mc/f
+1.22ms/f, 821.69FPS,  4.26Mc/f
+1.21ms/f, 824.61FPS,  4.24Mc/f
+1.60ms/f, 625.59FPS,  5.60Mc/f
+1.25ms/f, 799.30FPS,  4.38Mc/f
+1.25ms/f, 801.67FPS,  4.37Mc/f
+1.25ms/f, 798.40FPS,  4.38Mc/f
+1.30ms/f, 770.71FPS,  4.54Mc/f
+1.22ms/f, 821.96FPS,  4.26Mc/f
+1.28ms/f, 778.27FPS,  4.50Mc/f
+1.22ms/f, 821.42FPS,  4.26Mc/f
+1.22ms/f, 819.47FPS,  4.27Mc/f

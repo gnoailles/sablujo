@@ -1,8 +1,46 @@
 #include "handmade_maths.h"
 
+
+vector3 multPointMatrix(matrix4* Matrix, vector3* Vector)
+{
+    vector3 Result;
+    // Result.vec = _mm_shuffle_ps(Vector->vec, Vector->vec, _MM_SHUFFLE(0,0,0,0));
+    // Result.vec = _mm_mul_ps(Result.vec, Matrix->vecs[0]);
+
+    // __m128 vTemp = _mm_shuffle_ps(Vector->vec, Vector->vec, _MM_SHUFFLE(1,1,1,1));
+    // vTemp = _mm_mul_ps(vTemp, Matrix->vecs[1]);
+    
+	// Result.vec = _mm_add_ps(Result.vec, vTemp);
+    // vTemp = _mm_shuffle_ps(Vector->vec, Vector->vec, _MM_SHUFFLE(2,2,2,2));
+    
+	// vTemp = _mm_mul_ps(vTemp, Matrix->vecs[2]);
+    // Result.vec = _mm_add_ps(Result.vec, vTemp);
+    
+	// Result.vec = _mm_add_ps(Result.vec, Matrix->vecs[3]);
+	// return Result;
+    Result.X = Vector->X * Matrix->val[0][0] + Vector->Y * Matrix->val[1][0] + Vector->Z * Matrix->val[2][0] + /*Vector->W = 1*/ Matrix->val[3][0];
+    Result.Y = Vector->X * Matrix->val[0][1] + Vector->Y * Matrix->val[1][1] + Vector->Z * Matrix->val[2][1] + /*Vector->W = 1*/ Matrix->val[3][1];
+    Result.Z = Vector->X * Matrix->val[0][2] + Vector->Y * Matrix->val[1][2] + Vector->Z * Matrix->val[2][2] + /*Vector->W = 1*/ Matrix->val[3][2];
+    return Result;
+}
+
 vector3 multVecMatrix(matrix4* Matrix, vector3* Vector)
 {
     vector3 Result;
+    // Result.vec = _mm_shuffle_ps(Vector->vec, Vector->vec, _MM_SHUFFLE(0,0,0,0));
+    // Result.vec = _mm_mul_ps(Result.vec, Matrix->vecs[0]);
+
+    // __m128 vTemp = _mm_shuffle_ps(Vector->vec, Vector->vec, _MM_SHUFFLE(1,1,1,1));
+    // vTemp = _mm_mul_ps(vTemp, Matrix->vecs[1]);
+    
+	// Result.vec = _mm_add_ps(Result.vec, vTemp);
+    // vTemp = _mm_shuffle_ps(Vector->vec, Vector->vec, _MM_SHUFFLE(2,2,2,2));
+    
+	// vTemp = _mm_mul_ps(vTemp, Matrix->vecs[2]);
+    // Result.vec = _mm_add_ps(Result.vec, vTemp);
+    
+	// Result.vec = _mm_add_ps(Result.vec, Matrix->vecs[3]);
+	// return Result;
 
     Result.X = Vector->X * Matrix->val[0][0] + Vector->Y * Matrix->val[1][0] + Vector->Z * Matrix->val[2][0] + /*Vector->W = 1*/ Matrix->val[3][0];
     Result.Y = Vector->X * Matrix->val[0][1] + Vector->Y * Matrix->val[1][1] + Vector->Z * Matrix->val[2][1] + /*Vector->W = 1*/ Matrix->val[3][1];
