@@ -213,6 +213,25 @@ RasterizeRegion(game_offscreen_buffer* Buffer,
     }
 }
 
+internal void 
+TransformVertices(camera* Camera, 
+                  vector3* Vertices, uint32_t VertexOffset, uint32_t VertexCount, 
+                  int32_t ScreenWidth, int32_t ScreenHeight, 
+                  vector2i* OutputVertices)
+{
+    for (uint32_t j = VertexOffset; j < VertexOffset + VertexCount; j++) 
+    {
+        vector3 CameraSpaceVertex = multVecMatrix(&Camera->World, &Vertices[j]);
+        vector3 ProjectedVertex = multVecMatrix(&Camera->PerspectiveProjection, &CameraSpaceVertex);
+
+        // convert to raster space and mark the position of the vertex in the image with a simple dot
+        int32_t x = MIN(ScreenWidth - 1, (int32_t)((ProjectedVertex.X + 1) * 0.5f * ScreenWidth));
+        int32_t y = MIN(ScreenHeight - 1, (int32_t)((1 - (ProjectedVertex.Y + 1) * 0.5f) * ScreenHeight));
+
+        OutputVertices[j] = {x, y};
+    }
+}
+
 
 #include "teapot_vertices.h"
 
@@ -238,7 +257,7 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
 
     float AngleRad = GameState->YRot * PI_FLOAT / 180.0f;
     matrix4 YRotMatrix = GetYRotationMatrix(AngleRad);
-    AngleRad = -45.0f * PI_FLOAT / 180.0f;
+    AngleRad = 150.0f * PI_FLOAT / 180.0f;
     matrix4 XRotMatrix = GetXRotationMatrix(AngleRad);
     matrix4 Rotation = multMatrixMatrix(&YRotMatrix,&XRotMatrix);
 
@@ -247,32 +266,21 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     Translation.val[1][1] = 1.0f;
     Translation.val[2][2] = 1.0f;
     Translation.val[3][3] = 1.0f;
-    Translation.val[3][1] = 0.5f;
-    Translation.val[3][2] = -5.0f;
+    Translation.val[3][1] = -0.5f;
+    Translation.val[3][2] = -2.75f;
 
     Camera->World = multMatrixMatrix(&Rotation, &Translation);
     GameState->YRot += .5f;
 
-
-    for (uint32_t i = 0; i < CubeNumVertices; i+=3) 
+    const uint32_t VertexCount = TeapotNumVertices;
+    vector3* Vertices = TeapotVertices;
+    vector2i TriangleVertices[VertexCount];
+     TransformVertices(Camera, Vertices, 0, VertexCount, Buffer->Width, Buffer->Height, TriangleVertices);
+    for (uint32_t i = 0; i < TeapotNumVertices; i+=3) 
     {
-        
-        vector2i TriangleVertices[3];
-        for (uint32_t j = 0; j < 3; j++) 
-        {
-            vector3 CameraSpaceVertex = multVecMatrix(&Camera->World, &CubeVertices[i + j]);
-            vector3 ProjectedVertex = multVecMatrix(&Camera->PerspectiveProjection, &CameraSpaceVertex);
-
-            // convert to raster space and mark the position of the vertex in the image with a simple dot
-            int32_t x = MIN(Buffer->Width - 1, (int32_t)((ProjectedVertex.X + 1) * 0.5f * Buffer->Width));
-            int32_t y = MIN(Buffer->Height - 1, (int32_t)((1 - (ProjectedVertex.Y + 1) * 0.5f) * Buffer->Height));
-
-            TriangleVertices[j] = {x, y};
-        }
-
-        vector2i V0 = TriangleVertices[0];
-        vector2i V1 = TriangleVertices[1];
-        vector2i V2 = TriangleVertices[2];
+        vector2i V0 = TriangleVertices[i+0];
+        vector2i V1 = TriangleVertices[i+1];
+        vector2i V2 = TriangleVertices[i+2];
 
         int32_t MinX = MIN(V0.X, MIN(V1.X, V2.X));
         int32_t MinY = MIN(V0.Y, MIN(V1.Y, V2.Y));
@@ -285,28 +293,31 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
         MaxX = MIN(MaxX, Buffer->Width - 1);
         MaxY = MIN(MaxY, Buffer->Height - 1);
         RasterizeRegion(Buffer, MinX, MinY, MaxX, MaxY, V0, V1, V2);
-        // ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + V0.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + V1.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + V2.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + V0.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + V1.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + V2.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
+
+#if 1
+        ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + V0.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + V1.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + V2.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + V0.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + V1.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + V2.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
         
-        // ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + V0.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + V1.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + V2.X] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
-        // ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + V0.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + V1.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + V2.X] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
+        ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
+#endif
     }
 
 
@@ -319,20 +330,20 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     int32_t ThreadRegionHeight = Buffer->Height / ThreadPerSide;
 
     Assert(ThreadCount <= std::thread::hardware_concurrency());
-    Assert(Memory->TransientStorageSize >=  sizeof(std::thread) * ThreadCount);
-    std::thread* Threads =  (std::thread*)Memory->TransientStorage;
-    for(uint32_t i = 0; i < ThreadPerSide; ++i)
+    Assert(Memory->TransientStorageSize >= sizeof(std::thread) * ThreadCount);
+    std::thread* Threads = (std::thread*)Memory->TransientStorage;
+    for (uint32_t i = 0; i < ThreadPerSide; ++i)
     {
-        for(uint32_t j = 0; j < ThreadPerSide; ++j)
+        for (uint32_t j = 0; j < ThreadPerSide; ++j)
         {
-             Threads[i * ThreadPerSide + j] = std::move(std::thread(RasterizeRegion, Buffer, ThreadRegionWidth * i, ThreadRegionHeight * j, ThreadRegionWidth * (i + 1), ThreadRegionHeight * (j + 1)));
+            Threads[i * ThreadPerSide + j] = std::move(std::thread(RasterizeRegion, Buffer, ThreadRegionWidth * i, ThreadRegionHeight * j, ThreadRegionWidth * (i + 1), ThreadRegionHeight * (j + 1)));
         }
     }
 
-     for(uint32_t i = 0; i < ThreadCount; ++i)
-     {
-          Threads[i].join();
-     }
+    for (uint32_t i = 0; i < ThreadCount; ++i)
+    {
+        Threads[i].join();
+    }
 #else
     // RasterizeRegion(0, 0, Buffer->Width, Buffer->Height);
 #endif
