@@ -1,0 +1,15 @@
+19.57ms/f, 51.09FPS,  68.51Mc/f
+19.79ms/f, 50.53FPS,  69.27Mc/f
+20.33ms/f, 49.19FPS,  71.15Mc/f
+20.72ms/f, 48.27FPS,  72.51Mc/f
+20.62ms/f, 48.49FPS,  72.18Mc/f
+20.51ms/f, 48.75FPS,  71.80Mc/f
+20.55ms/f, 48.67FPS,  71.92Mc/f
+21.07ms/f, 47.46FPS,  73.75Mc/f
+21.31ms/f, 46.93FPS,  74.59Mc/f
+21.03ms/f, 47.56FPS,  73.60Mc/f
+20.86ms/f, 47.94FPS,  73.01Mc/f
+21.16ms/f, 47.27FPS,  74.05Mc/f
+20.76ms/f, 48.18FPS,  72.66Mc/f
+20.66ms/f, 48.40FPS,  72.32Mc/f
+21.08ms/f, 47.45FPS,  73.77Mc/f
