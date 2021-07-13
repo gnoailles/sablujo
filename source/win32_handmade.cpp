@@ -235,7 +235,8 @@ WinMain(HINSTANCE Instance,
 
     if(RegisterClassA(&WindowClass))
     {
-
+        int32_t DefaultWidth = 1280;
+        int32_t DefaultHeight = 720;
         HWND Window = 
             CreateWindowExA(0, 
                             WindowClass.lpszClassName, 
@@ -243,15 +244,15 @@ WinMain(HINSTANCE Instance,
                             WS_OVERLAPPEDWINDOW|WS_VISIBLE,
                             CW_USEDEFAULT,
                             CW_USEDEFAULT,
-                            CW_USEDEFAULT,
-                            CW_USEDEFAULT,
+                            DefaultWidth,
+                            DefaultHeight,
                             0,
                             0,
                             Instance,
                             0);
         if(Window)
         {
-            Win32ResizeDIBSection(&BackBuffer, 1280, 720);
+            Win32ResizeDIBSection(&BackBuffer, DefaultWidth, DefaultHeight);
             IsRunning = true;
 
             win32_game_code Game = Win32LoadGameCode(SourceGameCodeDLLFullPath, TempGameCodeDLLFullPath);

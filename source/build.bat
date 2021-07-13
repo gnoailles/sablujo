@@ -16,6 +16,6 @@ REM cl %CommonCompilerFlags% ..\handmade\code\win32_handmade.cpp /link -subsyste
 
 REM 64-bit build
 del *.pdb > NUL 2> NUL
-cl %CommonCompilerFlags% ..\source\handmade.cpp ..\source\handmade_maths.cpp -Fmhandmade.map -LD /link -incremental:no -opt:ref -PDB:handmade_%random%.pdb -EXPORT:GameUpdateAndRender
+cl %CommonCompilerFlags% ..\source\handmade.cpp ..\source\handmade_maths.cpp ..\source\geometry.cpp -Fmhandmade.map -LD /link -incremental:no -opt:ref -PDB:handmade_%random%.pdb -EXPORT:GameUpdateAndRender
 cl %CommonCompilerFlags% ..\source\win32_handmade.cpp -Fmwin32_handmade.map /link %CommonLinkerFlags%
 popd

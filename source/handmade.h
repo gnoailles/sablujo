@@ -1,24 +1,7 @@
 #if !defined(HANDMADE_H)
 
 #include <stdint.h>
-
-#define internal static
-#define local_persist static
-#define global_variable static 
-
-#define Kilobytes(Value) ((Value)*1024)
-#define Megabytes(Value) (Kilobytes(Value)*1024)
-#define Gigabytes(Value) (Megabytes(Value)*1024)
-#define Terabytes(Value) (Gigabytes(Value)*1024)
-
-#if HANDMADE_SLOW
-// TODO: Complete assertion macro - don't worry everyone!
-#define Assert(Expression) if(!(Expression)) {*(int32_t *)0 = 0;}
-#else
-#define Assert(Expression)
-#endif
-
-
+#include "handmade_defines.h"
 #include "handmade_maths.h"
 
 struct game_memory
@@ -39,10 +22,21 @@ struct game_offscreen_buffer
 
 struct camera
 {
-    matrix4 PerspectiveProjection;
-    matrix4 World;
+    matrix4 View;
+    matrix4 Projection;
     float AspectRatio;
     bool IsInitialized;
+};
+
+struct mesh
+{
+    vector4* Vertices;
+    vector3* Normals;
+    uint32_t* Indices;
+    uint32_t VerticesCount;
+    uint32_t IndicesCount;
+    matrix4 Transform;
+    matrix4 InverseTransform;
 };
 
 namespace std
@@ -50,9 +44,13 @@ namespace std
     class thread;
 }
 
+#define SPHERE_SUBDIV 28 
+#define SPHERE_VERTEX_COUNT (SPHERE_SUBDIV * SPHERE_SUBDIV + 2)
+#define SPHERE_INDEX_COUNT (SPHERE_SUBDIV * 3 * 2 + (SPHERE_SUBDIV - 1) * (SPHERE_SUBDIV - 1) * 6)
 struct game_state
 {
     camera Camera;
+    mesh Meshes[2];
     float YRot;
 };
 
