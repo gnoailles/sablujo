@@ -32,7 +32,7 @@ void CreateSphere(uint32_t LatitudeCount, uint32_t LongitudeCount,
             const float Z = (float)(SinPhi * SinTheta);
             
             OutputVertices[OutputOffset] = {X * Radius, (float)CosTheta * Radius, Z * Radius, 1.0f};
-            OutputNormals[OutputOffset] = {X, (float)CosTheta, Z};
+            OutputNormals[OutputOffset] = {X, (float)CosTheta, Z, 0.0f};
             ++OutputOffset;
         }
     }

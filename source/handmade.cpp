@@ -120,7 +120,7 @@ VertexStage(camera* Camera, mesh* Mesh,
     }
 }
 
-vector3 LightPosition = {-3.0f, -8.0f, 0.0f, 1.0f};
+vector3 LightPosition = {-3.0f, -8.0f, 0.0f};
 const color LightColor = {0.3f, 1.0f, 0.4f};
 const float LightPower = 40.0;
 const float SpecularCoefficient = 8.0;
@@ -156,6 +156,7 @@ FragmentStage(vector3 WorldPosition, vector3 Normal)
     vector3 Difffuse = DiffuseColor * NdotL * LightPower;
     vector3 Specular = (SpecColor * SpecularHighlight) * SpecularCoefficient;
     vector3 ColorLinear = AmbientColor + Difffuse + Specular;
+    //#define FAST_POW 0
 #ifdef FAST_POW
     vector4 ColorLinear4;
     ColorLinear4.vec = ColorLinear.vec;
@@ -163,9 +164,9 @@ FragmentStage(vector3 WorldPosition, vector3 Normal)
 #else
     // apply gamma correction (assume ambientColor, diffuseColor and specColor
     // have been linearized, i.e. have no gamma correction in them)
-       vector3 ColorGammaCorrected = {powf(ColorLinear.X, InvScreenGamma), powf(ColorLinear.Y, InvScreenGamma), powf(ColorLinear.Z, InvScreenGamma)};
+    vector3 ColorGammaCorrected = {powf(ColorLinear.X, InvScreenGamma), powf(ColorLinear.Y, InvScreenGamma), powf(ColorLinear.Z, InvScreenGamma)};
 #endif
-//    return color{MAX(MIN(Normal.X, 1.0f), 0.0f), MAX(MIN(Normal.Y, 1.0f),0.0f), MAX(MIN(Normal.Z, 1.0f), 0.0f)};
+    //    return color{MAX(MIN(Normal.X, 1.0f), 0.0f), MAX(MIN(Normal.Y, 1.0f),0.0f), MAX(MIN(Normal.Z, 1.0f), 0.0f)};
     return color{MIN(ColorGammaCorrected.X, 1.0f), MIN(ColorGammaCorrected.Y, 1.0f), MIN(ColorGammaCorrected.Z, 1.0f)};
 #else
     return color{1.0f, 0.0f, 0.0f};
@@ -353,18 +354,18 @@ internal void RasterizeMesh(game_memory* Memory,
 #if 0
         for(uint32_t j = 0; j < 3; ++j)
         {           
-//            NormalizeVector(&TriangleNormals[i + j]);
+            //            NormalizeVector(&TriangleNormals[i + j]);
             vector3 NPos = TrianglePositions[i + j] + TriangleNormals[i + j];
             vector4 NormalPosition  = {NPos.X, NPos.Y, NPos.Z, 1.0f};
-
+            
             vector4 CameraSpaceVertex  = MultPointMatrix(&Camera->View, &NormalPosition);
             vector4 ProjectedVertex    = MultVecMatrix(&Camera->Projection, &CameraSpaceVertex);
-
+            
             int32_t x = MAX(0, MIN(Buffer->Width - 1, (int32_t)((ProjectedVertex.X + 1) * 0.5f * Buffer->Width)));
             int32_t y = MAX(0, MIN(Buffer->Height - 1, (int32_t)((1 - (ProjectedVertex.Y + 1) * 0.5f) * Buffer->Height)));
             ((uint32_t*)Buffer->Memory)[y * Buffer->Width + x] = 0x00FF0000;
         }    
-
+        
         if((V0.Y >= 0 && V0.Y < Buffer->Height) &&
            (V0.X >= 0 && V0.X < Buffer->Width))
         {
@@ -380,25 +381,25 @@ internal void RasterizeMesh(game_memory* Memory,
         {
             ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + V2.X] = 0x0000FFFF;
         }
-/*        ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + V0.X] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + V1.X] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + V2.X] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
-        
-        ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + V0.X] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + V1.X] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + V2.X] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
-        ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;*/
+        /*        ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + V0.X] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + V1.X] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + V2.X] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
+                
+                ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + V0.X] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + V1.X] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + V2.X] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
+                ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;*/
 #endif
     }
 }
@@ -445,14 +446,14 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     AngleRad = 0.0f * PI_FLOAT / 180.0f;
     matrix4 XRotMatrix = GetXRotationMatrix(AngleRad);
     matrix4 Rotation = MultMatrixMatrix(&YRotMatrix,&XRotMatrix);;
-    GameState->YRot += .5f;
+    //GameState->YRot += .5f;
     
     matrix4 Translation = {};
     Translation.val[0][0] = 1.0f;
     Translation.val[1][1] = 1.0f;
     Translation.val[2][2] = 1.0f;
     Translation.val[3][3] = 1.0f;
- 
+    
     Translation.val[3][0] = -1.0f;
     Translation.val[3][1] = 0.5f;
     Translation.val[3][2] = 2.0f;
@@ -474,7 +475,7 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     }
     
 #if HANDMADE_MULTITHREADING
-    float ThreadCountSqrt = sqrtf((float)std::thread::hardware_concurrency());
+    float ThreadCountSqrt = SquareRoot((float)std::thread::hardware_concurrency());
     uint32_t ThreadPerSide = (uint32_t)ThreadCountSqrt;
     uint32_t ThreadCount = ThreadPerSide * ThreadPerSide;
     
