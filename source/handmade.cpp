@@ -136,10 +136,19 @@ const color SpecColor = {1.0f, 1.0f, 1.0f};
 const float ScreenGamma = 2.2f;
 const float InvScreenGamma = 1.0f / ScreenGamma;
 
+inline float srgb_to_linear(float x) 
+{
+    return (x <= 0.04045f) ? x / 12.92f : powf((x + 0.055f) / 1.055f, 2.4f);
+}
+
+inline float linear_to_srgb(float x) 
+{
+    return (x <= 0.0031308f) ? x * 12.92f : 1.055f * powf(x, 1.0f / 2.4f);
+}
+
 internal color 
 FragmentStage(vector3 WorldPosition, vector3 Normal)
 {
-#if 1
     vector3 LightDir = LightPosition - WorldPosition;
     vector3 CamDir = CamPosition - WorldPosition;
     float Distance = MagnitudeSq(&LightDir);
@@ -156,24 +165,21 @@ FragmentStage(vector3 WorldPosition, vector3 Normal)
     vector3 Difffuse = DiffuseColor * NdotL * LightPower;
     vector3 Specular = (SpecColor * SpecularHighlight) * SpecularCoefficient;
     vector3 ColorLinear = AmbientColor + Difffuse + Specular;
-    //#define FAST_POW 0
-#ifdef FAST_POW
-    vector4 ColorLinear4;
-    ColorLinear4.vec = ColorLinear.vec;
-    vector4 ColorGammaCorrected = FastPositivePower(ColorLinear4, InvScreenGamma);
-#else
+
     // apply gamma correction (assume ambientColor, diffuseColor and specColor
     // have been linearized, i.e. have no gamma correction in them)
-    vector3 ColorGammaCorrected = {powf(ColorLinear.X, InvScreenGamma), powf(ColorLinear.Y, InvScreenGamma), powf(ColorLinear.Z, InvScreenGamma)};
-#endif
-    //    return color{MAX(MIN(Normal.X, 1.0f), 0.0f), MAX(MIN(Normal.Y, 1.0f),0.0f), MAX(MIN(Normal.Z, 1.0f), 0.0f)};
+    vector3 ColorGammaCorrected = 
+    {
+        linear_to_srgb(ColorLinear.X), 
+        linear_to_srgb(ColorLinear.Y), 
+        linear_to_srgb(ColorLinear.Z)
+    };
+
     return color{MIN(ColorGammaCorrected.X, 1.0f), MIN(ColorGammaCorrected.Y, 1.0f), MIN(ColorGammaCorrected.Z, 1.0f)};
-#else
-    return color{1.0f, 0.0f, 0.0f};
-#endif
 }
 
-struct edge {
+struct edge 
+{
     // Dimensions of our pixel group
     static const int StepXSize = 4;
     static const int StepYSize = 1;
@@ -305,9 +311,10 @@ RasterizeRegion(game_offscreen_buffer* Buffer,
     }
 }
 
-internal void RasterizeMesh(game_memory* Memory, 
-                            game_offscreen_buffer* Buffer, 
-                            camera* Camera, mesh* Mesh)
+internal void 
+RasterizeMesh(game_memory* Memory, 
+              game_offscreen_buffer* Buffer, 
+              camera* Camera, mesh* Mesh)
 {
     /*const uint32_t IndexCount = SPHERE_INDEX_COUNT;
     uint32_t* Indices = Sphere->Indices;
@@ -446,7 +453,7 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     AngleRad = 0.0f * PI_FLOAT / 180.0f;
     matrix4 XRotMatrix = GetXRotationMatrix(AngleRad);
     matrix4 Rotation = MultMatrixMatrix(&YRotMatrix,&XRotMatrix);;
-    //GameState->YRot += .5f;
+    GameState->YRot += .5f;
     
     matrix4 Translation = {};
     Translation.val[0][0] = 1.0f;
@@ -473,31 +480,4 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     {
         RasterizeMesh(Memory, Buffer, Camera, &GameState->Meshes[i]);
     }
-    
-#if HANDMADE_MULTITHREADING
-    float ThreadCountSqrt = SquareRoot((float)std::thread::hardware_concurrency());
-    uint32_t ThreadPerSide = (uint32_t)ThreadCountSqrt;
-    uint32_t ThreadCount = ThreadPerSide * ThreadPerSide;
-    
-    int32_t ThreadRegionWidth = Buffer->Width / ThreadPerSide;
-    int32_t ThreadRegionHeight = Buffer->Height / ThreadPerSide;
-    
-    Assert(ThreadCount <= std::thread::hardware_concurrency());
-    Assert(Memory->TransientStorageSize >= sizeof(std::thread) * ThreadCount);
-    std::thread* Threads = (std::thread*)Memory->TransientStorage;
-    for (uint32_t i = 0; i < ThreadPerSide; ++i)
-    {
-        for (uint32_t j = 0; j < ThreadPerSide; ++j)
-        {
-            Threads[i * ThreadPerSide + j] = std::move(std::thread(RasterizeRegion, Buffer, ThreadRegionWidth * i, ThreadRegionHeight * j, ThreadRegionWidth * (i + 1), ThreadRegionHeight * (j + 1)));
-        }
-    }
-    
-    for (uint32_t i = 0; i < ThreadCount; ++i)
-    {
-        Threads[i].join();
-    }
-#else
-    // RasterizeRegion(0, 0, Buffer->Width, Buffer->Height);
-#endif
 }

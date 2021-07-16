@@ -344,34 +344,14 @@ inline matrix4 GetZRotationMatrix(float AngleInRadians)
 
 // Vector 3
 // FUNCTIONS
-
 inline float Sum(vector3* Vector)
 {
-    // Quick testing seemed to show that the SIMD version is performing worse
-#if 0
-    Assert(Vector->Padding == 0.0f);
-    __m128 Shuf = _mm_movehdup_ps(Vector->vec); // broadcast elements 3,1 to 2,0
-    __m128 Sums = _mm_add_ps(Vector->vec, Shuf);
-    Shuf        = _mm_movehl_ps(Shuf, Sums);    // high half -> low half
-    Sums        = _mm_add_ss(Sums, Shuf);
-    return        _mm_cvtss_f32(Sums);
-#else
     return Vector->X + Vector->Y + Vector->Z;
-#endif
 }
 
 inline float Sum(__m128 Vector)
 {
-    // Quick testing seemed to show that the SIMD version is performing worse
-#if 0
-    __m128 Shuf = _mm_movehdup_ps(Vector); // broadcast elements 3,1 to 2,0
-    __m128 Sums = _mm_add_ps(Vector, Shuf);
-    Shuf        = _mm_movehl_ps(Shuf, Sums);    // high half -> low half
-    Sums        = _mm_add_ss(Sums, Shuf);
-    return        _mm_cvtss_f32(Sums);
-#else
     return Vector.m128_f32[0] + Vector.m128_f32[1] + Vector.m128_f32[2];
-#endif
 }
 
 inline float MagnitudeSq(vector3* Vector)
@@ -388,25 +368,19 @@ inline float Magnitude(vector3* Vector)
 
 inline void NormalizeVector(vector3* Vector)
 {
-    float Length = Magnitude(Vector);
-    if(Length != 1.0f)
+    float LengthSq = MagnitudeSq(Vector);
+    if(LengthSq > 0.0000001f)
     {
-        __m128 LengthVec = _mm_set_ps1(Length);
-        Vector->vec = _mm_div_ps(Vector->vec, LengthVec);
+        __m128 InvLength = _mm_rsqrt_ps(_mm_set_ps1(LengthSq));
+        Vector->vec = _mm_mul_ps(Vector->vec, InvLength);
         Vector->Padding = 0.0f;
     }
 }
 
 inline float DotProduct(vector3* A, vector3* B)
 {
-#if 1
     Assert(A->Padding == 0.0f || B->Padding == 0.0f);
     return _mm_dp_ps(A->vec, B->vec, 0xFF).m128_f32[0];
-#else
-    __m128 Mult = _mm_mul_ps(A->vec, B->vec);
-    Assert(Mult.m128_f32[3] == 0.0f);
-    return Sum(Mult);
-#endif
 }
 
 // ADD
@@ -415,7 +389,6 @@ inline vector3 operator+(vector3 lhs, vector3 rhs)
     vector3 Result;
     Result.vec = _mm_add_ps(lhs.vec, rhs.vec);
     return Result;
-    // return vector3{lhs.X + rhs.X, lhs.Y + rhs.Y, lhs.Z + rhs.Z, lhs.Padding + rhs.Padding};
 }
 
 // SUB
@@ -424,7 +397,6 @@ inline vector3 operator-(vector3 lhs, vector3 rhs)
     vector3 Result;
     Result.vec = _mm_sub_ps(lhs.vec, rhs.vec);
     return Result;
-    // return vector3{lhs.X - rhs.X, lhs.Y - rhs.Y, lhs.Z - rhs.Z, lhs.Padding - rhs.Padding};
 }
 
 inline vector3 operator-(int32_t lhs, vector3 rhs)
@@ -432,7 +404,6 @@ inline vector3 operator-(int32_t lhs, vector3 rhs)
     vector3 Result;
     Result.vec = _mm_sub_ps(_mm_set1_ps((float)lhs), rhs.vec);
     return Result;
-    // return vector3{lhs - rhs.X, lhs - rhs.Y, lhs - rhs.Z, lhs - rhs.Padding};
 }
 
 // MULTIPLY
@@ -441,7 +412,6 @@ inline vector3 operator*(int32_t lhs, vector3 rhs)
     vector3 Result;
     Result.vec = _mm_mul_ps(_mm_set1_ps((float)lhs), rhs.vec);
     return Result;
-    // return vector3{rhs.X * lhs, rhs.Y * lhs, rhs.Z * lhs, rhs.Padding * lhs};
 }
 
 inline vector3 operator*(float lhs, vector3 rhs)
@@ -449,7 +419,6 @@ inline vector3 operator*(float lhs, vector3 rhs)
     vector3 Result;
     Result.vec = _mm_mul_ps(_mm_set1_ps(lhs), rhs.vec);
     return Result;
-    // return vector3{lhs * rhs.X, lhs * rhs.Y, lhs * rhs.Z, lhs * rhs.Padding};
 }
 
 inline vector3 operator*(vector3 lhs, float rhs)
@@ -457,7 +426,6 @@ inline vector3 operator*(vector3 lhs, float rhs)
     vector3 Result;
     Result.vec = _mm_mul_ps(lhs.vec, _mm_set1_ps(rhs));
     return Result;
-    // return vector3{lhs.X * rhs, lhs.Y * rhs, lhs.Z * rhs, lhs.Padding * rhs};
 }
 
 inline vector3 operator*(vector3 lhs, vector3 rhs)
@@ -465,7 +433,6 @@ inline vector3 operator*(vector3 lhs, vector3 rhs)
     vector3 Result;
     Result.vec = _mm_mul_ps(lhs.vec, rhs.vec);
     return Result;
-    // return vector3{lhs.X * rhs.X, lhs.Y * rhs.Y, lhs.Z * rhs.Z, lhs.Padding * rhs.Padding};
 }
 
 // Vector 4
@@ -476,8 +443,8 @@ inline vector4i operator+(vector4i lhs, vector4i rhs)
     vector4i Result;
     Result.vec = _mm_add_epi32(lhs.vec, rhs.vec);
     return Result;
-    // return vector4i{lhs.X + rhs.X, lhs.Y + rhs.Y, lhs.Z + rhs.Z, lhs.W + rhs.W};
 }
+
 inline vector4i& operator+=(vector4i& lhs, vector4i rhs)
 {
     lhs.vec = _mm_add_epi32(lhs.vec, rhs.vec);
@@ -506,7 +473,6 @@ inline vector4i operator|(const vector4i& lhs, const vector4i& rhs)
     vector4i Result;
     Result.vec = _mm_or_si128(lhs.vec, rhs.vec);
     return Result;
-    // return vector4i{lhs.X | rhs.X, lhs.Y | rhs.Y, lhs.Z | rhs.Z, lhs.W | rhs.W};
 }
 
 inline bool VectorIsAnyPositive(vector4i* Vector)

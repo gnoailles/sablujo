@@ -1,39 +1,60 @@
 
 -Od
 BASE
-39.28ms/f, 25.46FPS,  137.50Mc/f
-39.10ms/f, 25.58FPS,  136.84Mc/f
-40.20ms/f, 24.87FPS,  140.72Mc/f
-40.14ms/f, 24.91FPS,  140.51Mc/f
-40.28ms/f, 24.82FPS,  141.00Mc/f
-39.65ms/f, 25.22FPS,  138.78Mc/f
-39.70ms/f, 25.19FPS,  138.96Mc/f
-40.56ms/f, 24.65FPS,  141.97Mc/f
-41.58ms/f, 24.05FPS,  145.52Mc/f
-40.87ms/f, 24.47FPS,  143.06Mc/f
-39.89ms/f, 25.07FPS,  139.61Mc/f
-39.56ms/f, 25.28FPS,  138.47Mc/f
-39.16ms/f, 25.54FPS,  137.06Mc/f
-40.47ms/f, 24.71FPS,  141.66Mc/f
-39.97ms/f, 25.02FPS,  139.91Mc/f
-40.03ms/f, 24.98FPS,  140.12Mc/f
-39.50ms/f, 25.31FPS,  138.27Mc/f
+35.49ms/f, 28.18FPS,  124.22Mc/f
+35.91ms/f, 27.85FPS,  125.68Mc/f
+35.90ms/f, 27.85FPS,  125.67Mc/f
+35.86ms/f, 27.88FPS,  125.53Mc/f
+35.79ms/f, 27.94FPS,  125.29Mc/f
+36.06ms/f, 27.73FPS,  126.21Mc/f
+36.44ms/f, 27.45FPS,  127.54Mc/f
+35.53ms/f, 28.15FPS,  124.36Mc/f
+35.96ms/f, 27.81FPS,  125.88Mc/f
+35.63ms/f, 28.07FPS,  124.71Mc/f
+35.71ms/f, 28.00FPS,  124.99Mc/f
+35.82ms/f, 27.92FPS,  125.38Mc/f
+36.09ms/f, 27.71FPS,  126.34Mc/f
+35.92ms/f, 27.84FPS,  125.73Mc/f
+35.92ms/f, 27.84FPS,  125.74Mc/f
+35.72ms/f, 28.00FPS,  125.02Mc/f
+35.70ms/f, 28.01FPS,  124.97Mc/f
+35.32ms/f, 28.31FPS,  123.64Mc/f
+35.33ms/f, 28.30FPS,  123.68Mc/f
+35.35ms/f, 28.29FPS,  123.72Mc/f
+35.39ms/f, 28.26FPS,  123.87Mc/f
+36.32ms/f, 27.54FPS,  127.12Mc/f
+35.56ms/f, 28.12FPS,  124.47Mc/f
+35.70ms/f, 28.01FPS,  124.96Mc/f
+35.82ms/f, 27.91FPS,  125.40Mc/f
+35.56ms/f, 28.12FPS,  124.48Mc/f
 
 TEST INTRINSIC SQRT
 
 -O2
 BASE
-13.17ms/f, 75.95FPS,  46.08Mc/f
-13.18ms/f, 75.90FPS,  46.12Mc/f
-13.12ms/f, 76.25FPS,  45.91Mc/f
-13.22ms/f, 75.65FPS,  46.27Mc/f
-13.24ms/f, 75.51FPS,  46.35Mc/f
-13.22ms/f, 75.66FPS,  46.26Mc/f
-13.18ms/f, 75.89FPS,  46.12Mc/f
-13.14ms/f, 76.12FPS,  45.99Mc/f
-13.14ms/f, 76.09FPS,  46.00Mc/f
-13.20ms/f, 75.75FPS,  46.21Mc/f
-13.25ms/f, 75.49FPS,  46.37Mc/f
-13.22ms/f, 75.64FPS,  46.28Mc/f
+11.55ms/f, 86.59FPS,  40.42Mc/f
+11.57ms/f, 86.47FPS,  40.48Mc/f
+11.49ms/f, 87.06FPS,  40.20Mc/f
+11.57ms/f, 86.42FPS,  40.50Mc/f
+11.53ms/f, 86.71FPS,  40.37Mc/f
+11.60ms/f, 86.24FPS,  40.59Mc/f
+11.79ms/f, 84.83FPS,  41.26Mc/f
+11.57ms/f, 86.42FPS,  40.50Mc/f
+11.61ms/f, 86.10FPS,  40.65Mc/f
+11.63ms/f, 85.96FPS,  40.72Mc/f
+11.58ms/f, 86.36FPS,  40.53Mc/f
+11.59ms/f, 86.26FPS,  40.58Mc/f
+11.55ms/f, 86.59FPS,  40.42Mc/f
+11.55ms/f, 86.56FPS,  40.44Mc/f
+11.49ms/f, 87.03FPS,  40.22Mc/f
+11.55ms/f, 86.58FPS,  40.43Mc/f
+11.59ms/f, 86.26FPS,  40.58Mc/f
+11.81ms/f, 84.70FPS,  41.32Mc/f
+11.70ms/f, 85.47FPS,  40.95Mc/f
+11.57ms/f, 86.45FPS,  40.49Mc/f
+11.65ms/f, 85.83FPS,  40.78Mc/f
+11.63ms/f, 85.95FPS,  40.72Mc/f
+11.56ms/f, 86.49FPS,  40.47Mc/f
+11.56ms/f, 86.54FPS,  40.45Mc/f
 
 TEST INTRINSIC SQRT
