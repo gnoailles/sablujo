@@ -1,5 +1,6 @@
 #include "handmade.h"
 #include "geometry.h"
+#include "handmade_sse.h"
 
 // internal void
 // RenderWeirdGradient(game_offscreen_buffer* Buffer, int32_t XOffset, int32_t YOffset)
@@ -61,7 +62,6 @@ InitializeCamera(camera* Camera, int32_t ImageWidth, int32_t ImageHeight)
     float Far = 100.0f; 
     Camera->AspectRatio = (float)ImageWidth / (float)ImageHeight; 
     
-    // float ScaleATanRad[4] = {};
     float HalfFOVRad = FOV * 0.5f * PI_FLOAT / 180.0f;
     float Scale = Tangent(HalfFOVRad) * Near; 
     float Right = Camera->AspectRatio * Scale;
@@ -146,49 +146,20 @@ inline float linear_to_srgb(float x)
     return (x <= 0.0031308f) ? x * 12.92f : 1.055f * powf(x, 1.0f / 2.4f);
 }
 
-internal color 
-FragmentStage(vector3 WorldPosition, vector3 Normal)
-{
-    vector3 LightDir = LightPosition - WorldPosition;
-    vector3 CamDir = CamPosition - WorldPosition;
-    float Distance = MagnitudeSq(&LightDir);
-    NormalizeVector(&LightDir);
-    NormalizeVector(&CamDir);
-    
-    vector3 HalfAngle = CamDir + LightDir;
-    NormalizeVector(&HalfAngle);
-    
-    float NdotL = MIN(MAX(DotProduct(&Normal, &LightDir), 0.0f), 1.0f);
-    float NdotH = MIN(MAX(DotProduct(&Normal, &HalfAngle), 0.0f), 1.0f);
-    float SpecularHighlight = powf(NdotH, Shininess);
-    
-    vector3 Difffuse = DiffuseColor * NdotL * LightPower;
-    vector3 Specular = (SpecColor * SpecularHighlight) * SpecularCoefficient;
-    vector3 ColorLinear = AmbientColor + Difffuse + Specular;
-
-    // apply gamma correction (assume ambientColor, diffuseColor and specColor
-    // have been linearized, i.e. have no gamma correction in them)
-    vector3 ColorGammaCorrected = 
-    {
-        linear_to_srgb(ColorLinear.X), 
-        linear_to_srgb(ColorLinear.Y), 
-        linear_to_srgb(ColorLinear.Z)
-    };
-
-    return color{MIN(ColorGammaCorrected.X, 1.0f), MIN(ColorGammaCorrected.Y, 1.0f), MIN(ColorGammaCorrected.Z, 1.0f)};
-}
-
 struct edge 
 {
     // Dimensions of our pixel group
-    static const int StepXSize = 4;
-    static const int StepYSize = 1;
+    static const int StepXSize = LANE_WIDTH > 1 ? LANE_WIDTH / 2 : 1;
+    static const int StepYSize = LANE_WIDTH > 1 ? LANE_WIDTH / StepXSize : 1;
     
-    vector4i OneStepX;
-    vector4i OneStepY;
+    //static const int StepXSize = LANE_WIDTH;
+    //static const int StepYSize = 1;
+    
+    lane_i32 OneStepX;
+    lane_i32 OneStepY;
 };
 
-internal vector4i 
+internal lane_i32
 InitEdge(edge* Edge, const vector2i& V0, const vector2i&V1, const vector2i& Origin)
 {
     // Edge setup
@@ -197,15 +168,30 @@ InitEdge(edge* Edge, const vector2i& V0, const vector2i&V1, const vector2i& Orig
     int32_t C = V0.X * V1.Y - V0.Y * V1.X;
     
     // Step deltas
-    Edge->OneStepX = vector4i{A * edge::StepXSize, A * edge::StepXSize, A * edge::StepXSize, A * edge::StepXSize};
-    Edge->OneStepY = vector4i{B * edge::StepYSize, B * edge::StepYSize, B * edge::StepYSize, B * edge::StepYSize};
+    Edge->OneStepX = InitLaneI32(A * edge::StepXSize);
+    Edge->OneStepY = InitLaneI32(B * edge::StepYSize);
     
     // x/y values for initial pixel block
-    vector4i x = vector4i{Origin.X, Origin.X + 1, Origin.X + 2, Origin.X + 3};
-    vector4i y = vector4i{Origin.Y, Origin.Y, Origin.Y, Origin.Y};
+    int32_t XValues[LANE_WIDTH];
+    int32_t YValues[LANE_WIDTH];
+    int32_t LaneCounter = 0;
+    for(int32_t YOffset = 0; YOffset < edge::StepYSize; ++YOffset)
+    {
+        for(int32_t XOffset = 0; XOffset < edge::StepXSize; ++XOffset)
+        {
+            XValues[LaneCounter] = Origin.X + XOffset;
+            YValues[LaneCounter] = Origin.Y + YOffset;
+            ++LaneCounter;
+        }
+    }
+    
+    
+    
+    lane_i32 x = LoadLaneI32(XValues);
+    lane_i32 y = LoadLaneI32(YValues);
     
     // Edge function values at origin
-    return A * x + B * y + vector4i{C,C,C,C};
+    return A * x + B * y + InitLaneI32(C);
 }
 
 
@@ -239,75 +225,139 @@ RasterizeRegion(game_offscreen_buffer* Buffer,
     float Area = (float)EdgeFunction(V0, V1, V2);
     
     edge E01, E12, E20;
-    vector4i W0Row = InitEdge(&E12, V1, V2, P);
-    vector4i W1Row = InitEdge(&E20, V2, V0, P);
-    vector4i W2Row = InitEdge(&E01, V0, V1, P);
+    
+    lane_i32 W0Row = InitEdge(&E12, V1, V2, P);
+    lane_i32 W1Row = InitEdge(&E20, V2, V0, P);
+    lane_i32 W2Row = InitEdge(&E01, V0, V1, P);
     
     for (int32_t j = StartHeight; j <= EndHeight; j += edge::StepYSize) 
     { 
         // Barycentric coordinates at start of row
-        vector4i W0 = W0Row;
-        vector4i W1 = W1Row;
-        vector4i W2 = W2Row;
+        lane_i32 W0 = W0Row;
+        lane_i32 W1 = W1Row;
+        lane_i32 W2 = W2Row;
         for (int32_t i = StartWidth; i <= EndWidth; i += edge::StepXSize) 
         {
-            vector4i Mask = {};
-            Mask.vec = _mm_cmplt_epi32(Mask.vec, _mm_or_si128(_mm_or_si128(W0.vec, W1.vec),W2.vec));
-            if (!_mm_test_all_zeros(Mask.vec, Mask.vec)) 
+            lane_i32 Mask = LaneZeroI32 < (W0 | W1 | W2);
+            if (!IsAllZeros(Mask)) 
             {
-                color EndColor = { 1.0f, 0.0f, 0.0f };
-                color c0 = { 1.0f, 0.0f, 0.0f };
-                color c1 = { 0.0f, 1.0f, 0.0f };
-                color c2 = { 0.0f, 0.0f, 1.0f };
+                lane_i32 MaskedW0;
+                lane_i32 MaskedW1;
+                lane_i32 MaskedW2;
+                ConditionalAssign(W0, &MaskedW0, Mask);
+                ConditionalAssign(W1, &MaskedW1, Mask);
+                ConditionalAssign(W2, &MaskedW2, Mask);
+                lane_f32 W0ratio = ConvertLaneI32ToF32(MaskedW0);
+                lane_f32 W1ratio = ConvertLaneI32ToF32(MaskedW1);
+                lane_f32 W2ratio = ConvertLaneI32ToF32(MaskedW2);
                 
-                __m128 W0ratio = _mm_cvtepi32_ps(W0.vec);
-                __m128 W1ratio = _mm_cvtepi32_ps(W1.vec);
-                __m128 W2ratio = _mm_cvtepi32_ps(W2.vec);
+                lane_f32 AreaVec = InitLaneF32(Area);
+                W0ratio = W0ratio / AreaVec;
+                W1ratio = W1ratio / AreaVec;
+                W2ratio = W2ratio / AreaVec;
                 
-                __m128 AreaVec = _mm_set_ps1 (Area);
-                W0ratio = _mm_div_ps(W0ratio, AreaVec);
-                W1ratio = _mm_div_ps(W1ratio, AreaVec);
-                W2ratio = _mm_div_ps(W2ratio, AreaVec);
+                vector3 PositionsWide[LANE_WIDTH];
+                vector3 NormalsWide[LANE_WIDTH];
+                for(uint32_t k = 0; k < LANE_WIDTH; ++k)
+                {
+                    PositionsWide[k] = GetLane(W0ratio, k) * Positions[IndexOffset] + GetLane(W1ratio, k) * Positions[IndexOffset + 1] + GetLane(W2ratio, k) * Positions[IndexOffset + 2];
+                    
+                    NormalsWide[k] = GetLane(W0ratio, k) * Normals[IndexOffset] + GetLane(W1ratio, k) * Normals[IndexOffset + 1]   + GetLane(W2ratio, k) * Normals[IndexOffset + 2];
+                }
                 
-                if(Mask.X)
+                lane_v3 LanePositions = LoadLaneV3(PositionsWide);
+                lane_v3 LaneNormals = LoadLaneV3(NormalsWide);
+                LaneNormals = Normalize(LaneNormals);
+                
+                lane_v3 LightPos = InitLaneV3(-3.0f, -8.0f, 0.0f);
+                lane_v3 CamPos = {};                
+                
+                lane_v3 LightDir = LightPos - LanePositions;
+                lane_v3 CamDir = CamPos - LanePositions;
+                
+                LightDir = Normalize(LightDir);
+                CamDir = Normalize(CamDir);
+                
+                lane_v3 HalfAngles = CamDir + LightDir;
+                HalfAngles = Normalize(HalfAngles);
+                
+                lane_f32 NdotL = DotProduct(LaneNormals, LightDir);
+                NdotL = Clamp(NdotL, LaneZeroF32, LaneOneF32);
+                
+                lane_f32 NdotH = DotProduct(LaneNormals, HalfAngles);
+                NdotH = Clamp(NdotH, LaneZeroF32, LaneOneF32);
+                
+                lane_f32 SpecularHighlight = Pow(NdotH, 32u);
+                
+                lane_v3 DiffuseCol = InitLaneV3(1.0f, 0.0f, 0.0f);
+                lane_f32 LightIntensity = InitLaneF32(40.0f);
+                
+                lane_v3 Diffuse = DiffuseCol * NdotL * LightIntensity;
+                
+                lane_v3 SpecularColor = InitLaneV3(1.0f, 1.0f, 1.0f);
+                lane_f32 SpecularIntensity = InitLaneF32(8.0f);
+                
+                lane_v3 Specular = SpecularColor * SpecularHighlight * SpecularIntensity;
+                
+                lane_v3 AmbientCol = InitLaneV3(0.1f, 0.0f, 0.0f);
+                lane_v3 ColorLinear = AmbientCol + Diffuse + Specular;
+                
+                ColorLinear.X = LinearToSRGB(ColorLinear.X);
+                ColorLinear.Y = LinearToSRGB(ColorLinear.Y);
+                ColorLinear.Z = LinearToSRGB(ColorLinear.Z);
+                
+                ColorLinear.X = Min(ColorLinear.X, LaneOneF32);
+                ColorLinear.Y = Min(ColorLinear.Y, LaneOneF32);
+                ColorLinear.Z = Min(ColorLinear.Z, LaneOneF32);
+                
+                
+#if 0
+                __m128 Const255 = _mm_set_ps1(255.0f);
+                __m128i UintColR = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(ColorLinear.X, Const255)), Mask.vec);
+                __m128i UintColG = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(ColorLinear.Y, Const255)), Mask.vec);
+                __m128i UintColB = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(ColorLinear.Z, Const255)), Mask.vec);
+                
+                
+                uint32_t* Pixels = &((uint32_t*)Buffer->Memory)[j * Buffer->Width + i];
+                
+                __m128i OldColorR = _mm_setr_epi32(Pixels[0] & 0x00FF0000, Pixels[1] & 0x00FF0000, Pixels[2] & 0x00FF0000, Pixels[3] & 0x00FF0000);
+                __m128i OldColorG = _mm_setr_epi32(Pixels[0] & 0x0000FF00, Pixels[1] & 0x0000FF00, Pixels[2] & 0x0000FF00, Pixels[3] & 0x0000FF00);
+                __m128i OldColorB = _mm_setr_epi32(Pixels[0] & 0x000000FF, Pixels[1] & 0x000000FF, Pixels[2] & 0x000000FF, Pixels[3] & 0x000000FF);
+                
+                UintColR = _mm_or_si128(_mm_andnot_si128(OldColorR,Mask.vec), UintColR);
+                UintColG = _mm_or_si128(_mm_andnot_si128(OldColorG,Mask.vec), UintColG);
+                UintColB = _mm_or_si128(_mm_andnot_si128(OldColorB,Mask.vec), UintColB);
+                
+                Pixels[0] = UintColR.m128i_u32[0] << 16 |  UintColG.m128i_u32[0] << 8 |  UintColB.m128i_u32[0];
+                Pixels[1] = UintColR.m128i_u32[1] << 16 |  UintColG.m128i_u32[1] << 8 |  UintColB.m128i_u32[1];
+                Pixels[2] = UintColR.m128i_u32[2] << 16 |  UintColG.m128i_u32[2] << 8 |  UintColB.m128i_u32[2];
+                Pixels[3] = UintColR.m128i_u32[3] << 16 |  UintColG.m128i_u32[3] << 8 |  UintColB.m128i_u32[3];
+                
+#else
+                int32_t LaneCount = 0;
+                for(int32_t YOffset = 0; YOffset < edge::StepYSize; ++YOffset)
                 {
-                    vector3 position = W0ratio.m128_f32[0] * Positions[IndexOffset] + W1ratio.m128_f32[0] * Positions[IndexOffset + 1] + W2ratio.m128_f32[0] * Positions[IndexOffset + 2];
-                    vector3 normal   = W0ratio.m128_f32[0] * Normals[IndexOffset]   + W1ratio.m128_f32[0] * Normals[IndexOffset + 1]   + W2ratio.m128_f32[0] * Normals[IndexOffset + 2];
-                    NormalizeVector(&normal);
-                    ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i] = ColorToUInt32(FragmentStage(position, normal));
+                    for(int32_t XOffset = 0; XOffset < edge::StepXSize; ++XOffset)
+                    {
+                        if(GetLane(Mask, LaneCount))
+                        {
+                            ((uint32_t*)Buffer->Memory)[(j + YOffset) * Buffer->Width + i + XOffset] = ColorToUInt32({GetLane(ColorLinear.X, LaneCount), GetLane(ColorLinear.Y, LaneCount), GetLane(ColorLinear.Z, LaneCount)});
+                        }
+                        ++LaneCount;
+                    }
                 }
-                if(Mask.Y)
-                {
-                    vector3 position = W0ratio.m128_f32[1] * Positions[IndexOffset] + W1ratio.m128_f32[1] * Positions[IndexOffset + 1] + W2ratio.m128_f32[1] * Positions[IndexOffset + 2];
-                    vector3 normal   = W0ratio.m128_f32[1] * Normals[IndexOffset]   + W1ratio.m128_f32[1] * Normals[IndexOffset + 1]   + W2ratio.m128_f32[1] * Normals[IndexOffset + 2];
-                    NormalizeVector(&normal);
-                    ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i + 1] = ColorToUInt32(FragmentStage(position, normal));
-                }
-                if(Mask.Z)
-                {
-                    vector3 position = W0ratio.m128_f32[2] * Positions[IndexOffset] + W1ratio.m128_f32[2] * Positions[IndexOffset + 1] + W2ratio.m128_f32[2] * Positions[IndexOffset + 2];
-                    vector3 normal   = W0ratio.m128_f32[2] * Normals[IndexOffset]   + W1ratio.m128_f32[2] * Normals[IndexOffset + 1]   + W2ratio.m128_f32[2] * Normals[IndexOffset + 2];
-                    NormalizeVector(&normal);
-                    ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i + 2] = ColorToUInt32(FragmentStage(position, normal));
-                }
-                if(Mask.W)
-                {
-                    vector3 position = W0ratio.m128_f32[3] * Positions[IndexOffset] + W1ratio.m128_f32[3] * Positions[IndexOffset + 1] + W2ratio.m128_f32[3] * Positions[IndexOffset + 2];
-                    vector3 normal   = W0ratio.m128_f32[3] * Normals[IndexOffset]   + W1ratio.m128_f32[3] * Normals[IndexOffset + 1]   + W2ratio.m128_f32[3] * Normals[IndexOffset + 2];
-                    NormalizeVector(&normal);
-                    ((uint32_t*)Buffer->Memory)[j * Buffer->Width + i + 3] = ColorToUInt32(FragmentStage(position, normal));
-                }
+#endif
             }
             // One step to the right
-            W0.vec = _mm_add_epi32(W0.vec, E12.OneStepX.vec);
-            W1.vec = _mm_add_epi32(W1.vec, E20.OneStepX.vec);
-            W2.vec = _mm_add_epi32(W2.vec, E01.OneStepX.vec);       
+            W0 += E12.OneStepX;
+            W1 += E20.OneStepX;
+            W2 += E01.OneStepX;       
         }
         
         // One row step
-        W0Row.vec = _mm_add_epi32(W0Row.vec, E12.OneStepY.vec);
-        W1Row.vec = _mm_add_epi32(W1Row.vec, E20.OneStepY.vec);
-        W2Row.vec = _mm_add_epi32(W2Row.vec, E01.OneStepY.vec);
+        W0Row += E12.OneStepY;
+        W1Row += E20.OneStepY;
+        W2Row += E01.OneStepY;
     }
 }
 
@@ -316,13 +366,6 @@ RasterizeMesh(game_memory* Memory,
               game_offscreen_buffer* Buffer, 
               camera* Camera, mesh* Mesh)
 {
-    /*const uint32_t IndexCount = SPHERE_INDEX_COUNT;
-    uint32_t* Indices = Sphere->Indices;
-    
-    const uint32_t VertexCount = SPHERE_VERTEX_COUNT;
-    vector4* Vertices = GameState->SphereVertices;
-    const uint32_t NormalCount = SPHERE_VERTEX_COUNT;
-    vector3* Normals = GameState->SphereNormals;*/
     Assert((sizeof(vector2i) + sizeof(vector3) * 2) * Mesh->IndicesCount <= Memory->TransientStorageSize);
     void* AssignPointer = Memory->TransientStorage;
     vector2i* TriangleVertices = (vector2i*)AssignPointer;
@@ -357,57 +400,6 @@ RasterizeMesh(game_memory* Memory,
         MaxX = MIN(MaxX, Buffer->Width - 1);
         MaxY = MIN(MaxY, Buffer->Height - 1);
         RasterizeRegion(Buffer, MinX, MinY, MaxX, MaxY, i, TriangleVertices, TrianglePositions, TriangleNormals);
-        
-#if 0
-        for(uint32_t j = 0; j < 3; ++j)
-        {           
-            //            NormalizeVector(&TriangleNormals[i + j]);
-            vector3 NPos = TrianglePositions[i + j] + TriangleNormals[i + j];
-            vector4 NormalPosition  = {NPos.X, NPos.Y, NPos.Z, 1.0f};
-            
-            vector4 CameraSpaceVertex  = MultPointMatrix(&Camera->View, &NormalPosition);
-            vector4 ProjectedVertex    = MultVecMatrix(&Camera->Projection, &CameraSpaceVertex);
-            
-            int32_t x = MAX(0, MIN(Buffer->Width - 1, (int32_t)((ProjectedVertex.X + 1) * 0.5f * Buffer->Width)));
-            int32_t y = MAX(0, MIN(Buffer->Height - 1, (int32_t)((1 - (ProjectedVertex.Y + 1) * 0.5f) * Buffer->Height)));
-            ((uint32_t*)Buffer->Memory)[y * Buffer->Width + x] = 0x00FF0000;
-        }    
-        
-        if((V0.Y >= 0 && V0.Y < Buffer->Height) &&
-           (V0.X >= 0 && V0.X < Buffer->Width))
-        {
-            ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + V0.X] = 0x0000FFFF;
-        }
-        if((V1.Y >= 0 && V1.Y < Buffer->Height) &&
-           (V1.X >= 0 && V1.X < Buffer->Width))
-        {
-            ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + V1.X] = 0x0000FFFF;
-        }
-        if((V2.Y >= 0 && V2.Y < Buffer->Height) &&
-           (V2.X >= 0 && V2.X < Buffer->Width))
-        {
-            ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + V2.X] = 0x0000FFFF;
-        }
-        /*        ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + V0.X] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + V1.X] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + V2.X] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V0.Y + 1) * Buffer->Width + (V0.X + 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V1.Y + 1) * Buffer->Width + (V1.X + 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V2.Y + 1) * Buffer->Width + (V2.X + 1)] = 0x0000FFFF;
-                
-                ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + V0.X] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + V1.X] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + V2.X] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[V0.Y * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[V1.Y * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[V2.Y * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V0.Y - 1) * Buffer->Width + (V0.X - 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V1.Y - 1) * Buffer->Width + (V1.X - 1)] = 0x0000FFFF;
-                ((uint32_t*)Buffer->Memory)[(V2.Y - 1) * Buffer->Width + (V2.X - 1)] = 0x0000FFFF;*/
-#endif
     }
 }
 

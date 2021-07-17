@@ -18,6 +18,7 @@
 
 #include "handmade_defines.h"
 
+
 struct matrix4
 {
     union
@@ -344,94 +345,20 @@ inline matrix4 GetZRotationMatrix(float AngleInRadians)
 
 // Vector 3
 // FUNCTIONS
-inline float Sum(vector3* Vector)
-{
-    return Vector->X + Vector->Y + Vector->Z;
-}
 
-inline float Sum(__m128 Vector)
-{
-    return Vector.m128_f32[0] + Vector.m128_f32[1] + Vector.m128_f32[2];
-}
-
-inline float MagnitudeSq(vector3* Vector)
-{
-    Assert(Vector->Padding == 0.0f);
-    __m128 Square = _mm_mul_ps(Vector->vec, Vector->vec);
-    return Sum(Square);
-}
-
-inline float Magnitude(vector3* Vector)
-{
-    return SquareRoot(MagnitudeSq(Vector));
-}
-
-inline void NormalizeVector(vector3* Vector)
-{
-    float LengthSq = MagnitudeSq(Vector);
-    if(LengthSq > 0.0000001f)
-    {
-        __m128 InvLength = _mm_rsqrt_ps(_mm_set_ps1(LengthSq));
-        Vector->vec = _mm_mul_ps(Vector->vec, InvLength);
-        Vector->Padding = 0.0f;
-    }
-}
-
-inline float DotProduct(vector3* A, vector3* B)
-{
-    Assert(A->Padding == 0.0f || B->Padding == 0.0f);
-    return _mm_dp_ps(A->vec, B->vec, 0xFF).m128_f32[0];
-}
-
-// ADD
-inline vector3 operator+(vector3 lhs, vector3 rhs)
+inline vector3
+operator+(vector3 lhs, vector3 rhs)
 {
     vector3 Result;
     Result.vec = _mm_add_ps(lhs.vec, rhs.vec);
     return Result;
 }
 
-// SUB
-inline vector3 operator-(vector3 lhs, vector3 rhs)
-{
-    vector3 Result;
-    Result.vec = _mm_sub_ps(lhs.vec, rhs.vec);
-    return Result;
-}
-
-inline vector3 operator-(int32_t lhs, vector3 rhs)
-{
-    vector3 Result;
-    Result.vec = _mm_sub_ps(_mm_set1_ps((float)lhs), rhs.vec);
-    return Result;
-}
-
-// MULTIPLY
-inline vector3 operator*(int32_t lhs, vector3 rhs)
-{
-    vector3 Result;
-    Result.vec = _mm_mul_ps(_mm_set1_ps((float)lhs), rhs.vec);
-    return Result;
-}
-
-inline vector3 operator*(float lhs, vector3 rhs)
+inline vector3
+operator*(float lhs, vector3 rhs)
 {
     vector3 Result;
     Result.vec = _mm_mul_ps(_mm_set1_ps(lhs), rhs.vec);
-    return Result;
-}
-
-inline vector3 operator*(vector3 lhs, float rhs)
-{
-    vector3 Result;
-    Result.vec = _mm_mul_ps(lhs.vec, _mm_set1_ps(rhs));
-    return Result;
-}
-
-inline vector3 operator*(vector3 lhs, vector3 rhs)
-{
-    vector3 Result;
-    Result.vec = _mm_mul_ps(lhs.vec, rhs.vec);
     return Result;
 }
 
