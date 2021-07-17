@@ -1,5 +1,7 @@
 #ifndef HANDMADE_SSE_LANE4_H
 
+#include <immintrin.h>
+
 using lane_f32 = __m128;
 using lane_i32 = __m128i;
 
@@ -21,6 +23,7 @@ global_variable lane_f32 LaneZeroF32 = _mm_setzero_ps();
 
 global_variable lane_i32 LaneOneI32 = _mm_set1_epi32(1);
 global_variable lane_f32 LaneOneF32 = _mm_set_ps1(1.0f);
+global_variable lane_f32 LaneZeroPointFive = _mm_set_ps1(0.5f);
 
 inline lane_i32 
 InitLaneI32(int32_t Value)
@@ -47,15 +50,21 @@ IsAllZeros(lane_i32 A)
 }
 
 inline lane_i32
+operator-(lane_i32 A, lane_i32 B)
+{
+    return _mm_sub_epi32(A, B);
+}
+
+inline lane_i32
 operator+(lane_i32 A, lane_i32 B)
 {
     return _mm_add_epi32(A, B);
 }
 
-inline void
-operator+=(lane_i32& A, lane_i32 B)
+inline lane_i32
+operator*(lane_i32 A, lane_i32 B)
 {
-    A = A + B;
+    return _mm_mullo_epi32(A, B);
 }
 
 inline lane_i32
@@ -69,7 +78,13 @@ operator*(int32_t A, lane_i32 B)
 {
     return B * A;
 }
-
+/*
+inline lane_i32
+operator/(lane_i32 A, lane_i32 B)
+{
+    return _mm_div_epi32(A, B);
+}
+*/
 inline lane_i32
 operator<(lane_i32 A, lane_i32 B)
 {
@@ -86,6 +101,19 @@ inline lane_i32
 operator&(lane_i32 A, lane_i32 B)
 {
     return _mm_and_si128(A,B);
+}
+
+inline lane_i32
+operator<<(lane_i32 A, int32_t B)
+{
+    return _mm_slli_epi32(A, B);
+}
+
+
+inline lane_i32
+operator>>(lane_i32 A, int32_t B)
+{
+    return _mm_srli_epi32(A, B);
 }
 
 inline lane_i32
@@ -137,26 +165,33 @@ Min(lane_f32 A, lane_f32 Bound)
 }
 
 inline lane_f32
+Max(lane_f32 A, lane_f32 Bound)
+{
+    return _mm_max_ps(A, Bound);
+}
+
+inline lane_f32
 Clamp(lane_f32 A, lane_f32 LowerBound, lane_f32 UpperBound)
 {
     return _mm_max_ps(_mm_min_ps(A, UpperBound), LowerBound);
 }
 
-
 inline lane_f32
-Pow(lane_f32 A, float Power)
+MultiplyAdd(lane_f32 A, lane_f32 B, lane_f32 C)
 {
-    A.m128_f32[0] = powf(A.m128_f32[0], Power);
-    A.m128_f32[1] = powf(A.m128_f32[1], Power);
-    A.m128_f32[2] = powf(A.m128_f32[2], Power);
-    A.m128_f32[3] = powf(A.m128_f32[3], Power);
-    return A;
+    return _mm_fmadd_ps(A, B, C);
 }
 
 inline lane_f32
 operator+(lane_f32 A, lane_f32 B)
 {
     return _mm_add_ps(A,B);
+}
+
+inline lane_f32
+operator-(lane_f32 A, lane_f32 B)
+{
+    return _mm_sub_ps(A,B);
 }
 
 inline lane_f32
@@ -175,6 +210,12 @@ inline lane_f32
 operator<(lane_f32 A, lane_f32 B)
 {
     return  _mm_cmplt_ps(A,B);
+}
+
+inline lane_f32
+operator<=(lane_f32 A, lane_f32 B)
+{
+    return  _mm_cmple_ps(A,B);
 }
 
 inline lane_f32
@@ -267,15 +308,29 @@ operator*(lane_v3 A, lane_f32 B)
 // Casts & Conversions
 ////////////////////////
 
+inline lane_i32
+ConvertLaneF32ToI32(lane_f32 A)
+{
+    return _mm_cvtps_epi32(A);
+}
+
 inline lane_f32
 ConvertLaneI32ToF32(lane_i32 A)
 {
     return _mm_cvtepi32_ps(A);
 }
 
+inline lane_i32
+CastLaneF32ToI32(lane_f32 A)
+{
+    return _mm_castps_si128(A);
+}
 
-#define CastToLaneI32(A) (*(__m128i*)&(A))
-#define CastToLaneF32(A) (*(__m128*)&(A))
+inline lane_f32
+CastLaneI32ToF32(lane_i32 A)
+{
+    return _mm_castsi128_ps(A);
+}
 
 #define HANDMADE_SSE_LANE4_H
 #endif //HANDMADE_SSE_LANE4_H

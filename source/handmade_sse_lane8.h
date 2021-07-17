@@ -17,6 +17,7 @@ global_variable lane_f32 LaneZeroF32 = _mm256_setzero_ps();
 
 global_variable lane_i32 LaneOneI32 = _mm256_set1_epi32(1);
 global_variable lane_f32 LaneOneF32 = _mm256_set1_ps(1.0f);
+global_variable lane_f32 LaneZeroPointFive = _mm256_set1_ps(0.5f);
 
 inline lane_i32 
 InitLaneI32(int32_t Value)
@@ -49,22 +50,28 @@ operator+(lane_i32 A, lane_i32 B)
     return _mm256_add_epi32(A, B);
 }
 
-inline void
-operator+=(lane_i32& A, lane_i32 B)
+inline lane_i32
+operator-(lane_i32 A, lane_i32 B)
 {
-    A = A + B;
+    return _mm256_sub_epi32(A, B);
 }
 
 inline lane_i32
 operator*(lane_i32 A, int32_t B)
 {
-    return _mm256_mullo_epi32(A,InitLaneI32(B));
+    return _mm256_mullo_epi32(A, InitLaneI32(B));
 }
 
 inline lane_i32
 operator*(int32_t A, lane_i32 B)
 {
     return B * A;
+}
+
+inline lane_i32
+operator*(lane_i32 A, lane_i32 B)
+{
+    return _mm256_mullo_epi32(A, B);
 }
 
 inline lane_i32
@@ -89,6 +96,19 @@ inline lane_i32
 AndNot(lane_i32 A, lane_i32 B)
 {
     return _mm256_andnot_si256(A,B);
+}
+
+inline lane_i32
+operator<<(lane_i32 A, int32_t B)
+{
+    return _mm256_slli_epi32(A, B);
+}
+
+
+inline lane_i32
+operator>>(lane_i32 A, int32_t B)
+{
+    return _mm256_srli_epi32(A, B);
 }
 
 inline void
@@ -134,12 +154,24 @@ Min(lane_f32 A, lane_f32 Bound)
 }
 
 inline lane_f32
+Max(lane_f32 A, lane_f32 Bound)
+{
+    return _mm256_max_ps(A, Bound);
+}
+
+inline lane_f32
 Clamp(lane_f32 A, lane_f32 LowerBound, lane_f32 UpperBound)
 {
     return _mm256_max_ps(_mm256_min_ps(A, UpperBound), LowerBound);
 }
 
+inline lane_f32
+MultiplyAdd(lane_f32 A, lane_f32 B, lane_f32 C)
+{
+    return _mm256_fmadd_ps(A, B, C);
+}
 
+/*
 inline lane_f32
 Pow(lane_f32 A, float Power)
 {
@@ -153,11 +185,18 @@ Pow(lane_f32 A, float Power)
     A.m256_f32[7] = powf(A.m256_f32[7], Power);
     return A;
 }
+*/
 
 inline lane_f32
 operator+(lane_f32 A, lane_f32 B)
 {
     return _mm256_add_ps(A,B);
+}
+
+inline lane_f32
+operator-(lane_f32 A, lane_f32 B)
+{
+    return _mm256_sub_ps(A,B);
 }
 
 inline lane_f32
@@ -176,6 +215,12 @@ inline lane_f32
 operator<(lane_f32 A, lane_f32 B)
 {
     return _mm256_cmp_ps(A,B, _CMP_LT_OQ);
+}
+
+inline lane_f32
+operator<=(lane_f32 A, lane_f32 B)
+{
+    return _mm256_cmp_ps(A,B, _CMP_LE_OQ);
 }
 
 inline lane_f32
@@ -275,8 +320,27 @@ ConvertLaneI32ToF32(lane_i32 A)
 }
 
 
+inline lane_i32
+ConvertLaneF32ToI32(lane_f32 A)
+{
+    return _mm256_cvtps_epi32(A);
+}
+
+
+inline lane_i32
+CastLaneF32ToI32(lane_f32 A)
+{
+    return _mm256_castps_si256(A);
+}
+
+inline lane_f32
+CastLaneI32ToF32(lane_i32 A)
+{
+    return _mm256_castsi256_ps(A);
+}
+/*
 #define CastToLaneI32(A) (*(__m256i*)&(A))
 #define CastToLaneF32(A) (*(__m256*)&(A))
-
+*/
 #define HANDMADE_SSE_LANE8_H
 #endif //HANDMADE_SSE_LANE8_H
