@@ -22,6 +22,7 @@ global_variable lane_f32 LaneZeroF32 = 0.0f;
 
 global_variable lane_i32 LaneOneI32 = 1;
 global_variable lane_f32 LaneOneF32 = 1.0f;
+global_variable lane_f32 LaneZeroPointFive = 0.5f;
 
 inline float
 GetLane(lane_f32 A, int32_t Lane)
@@ -45,6 +46,14 @@ inline lane_i32
 InitLaneI32(int32_t Value)
 {
     return Value;
+}
+
+inline lane_i32
+LoadLaneI32(int32_t* Values)
+{
+    lane_i32 Result;
+    Result = *Values;
+    return Result;
 }
 
 inline lane_f32
@@ -96,11 +105,16 @@ Clamp(lane_f32 A, lane_f32 LowerBound, lane_f32 UpperBound)
     return MAX(MIN(A, UpperBound), LowerBound);
 }
 
-
 inline lane_f32
 Min(lane_f32 A, lane_f32 Bound)
 {
     return MIN(A, Bound);
+}
+
+inline lane_f32
+Max(lane_f32 A, lane_f32 Bound)
+{
+    return MAX(A, Bound);
 }
 
 
@@ -110,11 +124,13 @@ RSquareRoot(lane_f32 A)
     return _mm_rsqrt_ps(_mm_set_ps1(A)).m128_f32[0];
 }
 
+/*
 inline lane_f32
 Pow(lane_f32 A, float Power)
 {
     return powf(A, Power);
 }
+*/
 
 inline float
 Sum(lane_v3 Vector)
@@ -234,21 +250,50 @@ operator*(lane_v3 lhs, lane_v3 rhs)
     return Result;
 }
 
-#define CastToLaneI32(A) (*(int32_t*)&(A))
-#define CastToLaneF32(A) (*(float*)&(A))
+#define CastLaneF32ToI32(A) (*(int32_t*)&(A))
+#define CastLaneI32ToF32(A) (*(float*)&(A))
+
+
+inline lane_f32
+And(lane_f32& A, lane_f32 B)
+{
+    lane_i32 Result = CastLaneF32ToI32(A) & CastLaneF32ToI32(B);
+    return CastLaneI32ToF32(Result);
+}
+
 
 inline lane_f32
 AndNot(lane_f32 A, lane_f32 B)
 {
-    lane_i32 ResultInt = (~CastToLaneI32(A)) & CastToLaneI32(B);
-    return CastToLaneF32(ResultInt);
+    lane_i32 ResultInt = (~CastLaneF32ToI32(A)) & CastLaneF32ToI32(B);
+    return CastLaneI32ToF32(ResultInt);
 }
+
+inline lane_f32
+Or(lane_f32& A, lane_f32 B)
+{
+    lane_i32 Result = CastLaneF32ToI32(A) | CastLaneF32ToI32(B);
+    return CastLaneI32ToF32(Result);
+}
+
 inline lane_f32
 ConvertLaneI32ToF32(lane_i32 A)
 {
     return (float)A;
 }
 
+inline lane_i32
+ConvertLaneF32ToI32(lane_f32 A)
+{
+    return (int32_t)A;
+}
+
+
+inline lane_f32
+MultiplyAdd(lane_f32 A, lane_f32 B, lane_f32 C)
+{
+    return A * B + C;
+}
 #else
 #error "Specified lane width not supported"
 #endif
@@ -257,7 +302,7 @@ ConvertLaneI32ToF32(lane_i32 A)
 ////////////////////
 // Common Functions
 ////////////////////
-
+#if LANE_WIDTH != 1
 inline void
 operator+=(lane_i32& A, lane_i32 B)
 {
@@ -317,6 +362,7 @@ operator|=(lane_f32& A, lane_f32 B)
 {
     A = A | B;
 }
+#endif
 
 
 global_variable lane_f32 NormalizeThreshold = InitLaneF32(0.0000001f);
@@ -375,7 +421,7 @@ inline lane_f32 fast_exp(lane_f32 Value)
     
     // If greater, substract one
     lane_f32 Mask = Temp > Fx; //_mm_cmpgt_ps(Temp, Fx);    
-    Mask = Mask & LaneOneF32; //_mm_and_ps(Mask, One);
+    Mask = And(Mask, LaneOneF32); //_mm_and_ps(Mask, One);
     Fx = Temp - Mask; //_mm_sub_ps(Temp, Mask);
     
     Temp = Fx * ExpC1; //_mm_mul_ps(Fx, ExpC1);
@@ -441,8 +487,8 @@ inline lane_f32 fast_log(lane_f32 Value)
     // part 1: Value = frexpf(Value, &e);
     lane_i32 M = CastLaneF32ToI32(Result) >> 23;
     // keep only the fractional part
-    Result &= InverseMantissaMask;
-    Result |= LaneZeroPointFive;
+    Result = And(Result, InverseMantissaMask);
+    Result = Or(Result, LaneZeroPointFive);
     
     // now e contain the real base-2 exponent
     M -= Const0x7F;
@@ -460,9 +506,9 @@ inline lane_f32 fast_log(lane_f32 Value)
     // { x = x - 1.0; }
     
     lane_f32 Mask = Result < SQRTHF;
-    lane_f32 Temp = Result & Mask;
+    lane_f32 Temp = And(Result, Mask);
     Result -= LaneOneF32;
-    e -= (LaneOneF32 & Mask);
+    e -= And(LaneOneF32, Mask);
     Result += Temp;
     
     lane_f32 Z = Result * Result;
@@ -491,7 +537,7 @@ inline lane_f32 fast_log(lane_f32 Value)
     Result += Temp;
     
     
-    Result |= InvalidMask; // negative arg will be NAN
+    Result = Or(Result, InvalidMask); // negative arg will be NAN
     
     return Result;
 }

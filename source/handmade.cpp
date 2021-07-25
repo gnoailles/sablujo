@@ -97,7 +97,7 @@ InitializeCamera(camera* Camera, int32_t ImageWidth, int32_t ImageHeight)
 }
 
 internal void 
-VertexStage(camera* Camera, mesh* Mesh,
+VertexStage(game_state* GameState, mesh* Mesh,
             int32_t ScreenWidth, int32_t ScreenHeight, 
             vector2i* OutputVertices, vector3* OutputPositions, vector3* OutputNormals)
 {
@@ -105,8 +105,8 @@ VertexStage(camera* Camera, mesh* Mesh,
     {
         Assert(Mesh->Indices[j] < Mesh->VerticesCount);
         vector4 ModelVertex       = MultPointMatrix(&Mesh->Transform, &Mesh->Vertices[Mesh->Indices[j]]);
-        vector4 CameraSpaceVertex = MultPointMatrix(&Camera->View, &ModelVertex);
-        vector4 ProjectedVertex   = MultVecMatrix(&Camera->Projection, &CameraSpaceVertex);
+        vector4 CameraSpaceVertex = MultPointMatrix(&GameState->Camera.View, &ModelVertex);
+        vector4 ProjectedVertex   = MultVecMatrix(&GameState->Camera.Projection, &CameraSpaceVertex);
         
         vector3 TransformedNormal = MultPointMatrix(&Mesh->InverseTransform, &Mesh->Normals[Mesh->Indices[j]]);
         
@@ -117,7 +117,56 @@ VertexStage(camera* Camera, mesh* Mesh,
         OutputVertices[j]  = {x, y};
         OutputPositions[j] = vector3{ModelVertex.X, ModelVertex.Y, ModelVertex.Z};
         OutputNormals[j]   = TransformedNormal;
+#if HANDMADE_INTERNAL
+        ++GameState->RenderStats.VerticesCount;
+#endif
     }
+}
+
+internal lane_v3 
+FragmentStage(lane_v3 Position, lane_v3 Normal)
+{
+    lane_v3 LightPos = InitLaneV3(-3.0f, -8.0f, 0.0f);
+    lane_v3 CamPos = {};                
+    
+    lane_v3 LightDir = LightPos - Position;
+    lane_v3 CamDir = CamPos - Position;
+    
+    LightDir = Normalize(LightDir);
+    CamDir = Normalize(CamDir);
+    
+    lane_v3 HalfAngles = CamDir + LightDir;
+    HalfAngles = Normalize(HalfAngles);
+    
+    lane_f32 NdotL = DotProduct(Normal, LightDir);
+    NdotL = Clamp(NdotL, LaneZeroF32, LaneOneF32);
+    
+    lane_f32 NdotH = DotProduct(Normal, HalfAngles);
+    NdotH = Clamp(NdotH, LaneZeroF32, LaneOneF32);
+    
+    lane_f32 SpecularHighlight = Pow(NdotH, 32u);
+    
+    lane_v3 DiffuseCol = InitLaneV3(1.0f, 0.0f, 0.0f);
+    lane_f32 LightIntensity = InitLaneF32(40.0f);
+    
+    lane_v3 Diffuse = DiffuseCol * NdotL * LightIntensity;
+    
+    lane_v3 SpecularColor = InitLaneV3(1.0f, 1.0f, 1.0f);
+    lane_f32 SpecularIntensity = InitLaneF32(8.0f);
+    
+    lane_v3 Specular = SpecularColor * SpecularHighlight * SpecularIntensity;
+    
+    lane_v3 AmbientCol = InitLaneV3(0.1f, 0.0f, 0.0f);
+    lane_v3 FinalColor = AmbientCol + Diffuse + Specular;
+    
+    FinalColor.X = LinearToSRGB(FinalColor.X);
+    FinalColor.Y = LinearToSRGB(FinalColor.Y);
+    FinalColor.Z = LinearToSRGB(FinalColor.Z);
+    
+    FinalColor.X = Min(FinalColor.X, LaneOneF32);
+    FinalColor.Y = Min(FinalColor.Y, LaneOneF32);
+    FinalColor.Z = Min(FinalColor.Z, LaneOneF32);
+    return FinalColor;
 }
 
 vector3 LightPosition = {-3.0f, -8.0f, 0.0f};
@@ -208,7 +257,8 @@ EdgeFunction(vector2 A, vector2 B, vector2 C)
 }
 
 internal void 
-RasterizeRegion(game_offscreen_buffer* Buffer, 
+RasterizeRegion(game_state* GameState,
+                game_offscreen_buffer* Buffer, 
                 int32_t StartWidth, int32_t StartHeight,
                 int32_t EndWidth, int32_t EndHeight,
                 uint32_t IndexOffset,
@@ -269,85 +319,37 @@ RasterizeRegion(game_offscreen_buffer* Buffer,
                 lane_v3 LaneNormals = LoadLaneV3(NormalsWide);
                 LaneNormals = Normalize(LaneNormals);
                 
-                lane_v3 LightPos = InitLaneV3(-3.0f, -8.0f, 0.0f);
-                lane_v3 CamPos = {};                
+                lane_v3 FragmentColor = FragmentStage(LanePositions, LaneNormals);
                 
-                lane_v3 LightDir = LightPos - LanePositions;
-                lane_v3 CamDir = CamPos - LanePositions;
-                
-                LightDir = Normalize(LightDir);
-                CamDir = Normalize(CamDir);
-                
-                lane_v3 HalfAngles = CamDir + LightDir;
-                HalfAngles = Normalize(HalfAngles);
-                
-                lane_f32 NdotL = DotProduct(LaneNormals, LightDir);
-                NdotL = Clamp(NdotL, LaneZeroF32, LaneOneF32);
-                
-                lane_f32 NdotH = DotProduct(LaneNormals, HalfAngles);
-                NdotH = Clamp(NdotH, LaneZeroF32, LaneOneF32);
-                
-                lane_f32 SpecularHighlight = Pow(NdotH, 32u);
-                
-                lane_v3 DiffuseCol = InitLaneV3(1.0f, 0.0f, 0.0f);
-                lane_f32 LightIntensity = InitLaneF32(40.0f);
-                
-                lane_v3 Diffuse = DiffuseCol * NdotL * LightIntensity;
-                
-                lane_v3 SpecularColor = InitLaneV3(1.0f, 1.0f, 1.0f);
-                lane_f32 SpecularIntensity = InitLaneF32(8.0f);
-                
-                lane_v3 Specular = SpecularColor * SpecularHighlight * SpecularIntensity;
-                
-                lane_v3 AmbientCol = InitLaneV3(0.1f, 0.0f, 0.0f);
-                lane_v3 ColorLinear = AmbientCol + Diffuse + Specular;
-                
-                ColorLinear.X = LinearToSRGB(ColorLinear.X);
-                ColorLinear.Y = LinearToSRGB(ColorLinear.Y);
-                ColorLinear.Z = LinearToSRGB(ColorLinear.Z);
-                
-                ColorLinear.X = Min(ColorLinear.X, LaneOneF32);
-                ColorLinear.Y = Min(ColorLinear.Y, LaneOneF32);
-                ColorLinear.Z = Min(ColorLinear.Z, LaneOneF32);
-                
-                
-#if 0
-                __m128 Const255 = _mm_set_ps1(255.0f);
-                __m128i UintColR = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(ColorLinear.X, Const255)), Mask.vec);
-                __m128i UintColG = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(ColorLinear.Y, Const255)), Mask.vec);
-                __m128i UintColB = _mm_and_si128(_mm_cvtps_epi32(_mm_mul_ps(ColorLinear.Z, Const255)), Mask.vec);
-                
-                
-                uint32_t* Pixels = &((uint32_t*)Buffer->Memory)[j * Buffer->Width + i];
-                
-                __m128i OldColorR = _mm_setr_epi32(Pixels[0] & 0x00FF0000, Pixels[1] & 0x00FF0000, Pixels[2] & 0x00FF0000, Pixels[3] & 0x00FF0000);
-                __m128i OldColorG = _mm_setr_epi32(Pixels[0] & 0x0000FF00, Pixels[1] & 0x0000FF00, Pixels[2] & 0x0000FF00, Pixels[3] & 0x0000FF00);
-                __m128i OldColorB = _mm_setr_epi32(Pixels[0] & 0x000000FF, Pixels[1] & 0x000000FF, Pixels[2] & 0x000000FF, Pixels[3] & 0x000000FF);
-                
-                UintColR = _mm_or_si128(_mm_andnot_si128(OldColorR,Mask.vec), UintColR);
-                UintColG = _mm_or_si128(_mm_andnot_si128(OldColorG,Mask.vec), UintColG);
-                UintColB = _mm_or_si128(_mm_andnot_si128(OldColorB,Mask.vec), UintColB);
-                
-                Pixels[0] = UintColR.m128i_u32[0] << 16 |  UintColG.m128i_u32[0] << 8 |  UintColB.m128i_u32[0];
-                Pixels[1] = UintColR.m128i_u32[1] << 16 |  UintColG.m128i_u32[1] << 8 |  UintColB.m128i_u32[1];
-                Pixels[2] = UintColR.m128i_u32[2] << 16 |  UintColG.m128i_u32[2] << 8 |  UintColB.m128i_u32[2];
-                Pixels[3] = UintColR.m128i_u32[3] << 16 |  UintColG.m128i_u32[3] << 8 |  UintColB.m128i_u32[3];
-                
-#else
                 int32_t LaneCount = 0;
+#if HANDMADE_INTERNAL
+                GameState->RenderStats.PixelsComputed += LANE_WIDTH;
+                int32_t Waste = LANE_WIDTH;
+#endif
                 for(int32_t YOffset = 0; YOffset < edge::StepYSize; ++YOffset)
                 {
                     for(int32_t XOffset = 0; XOffset < edge::StepXSize; ++XOffset)
                     {
                         if(GetLane(Mask, LaneCount))
                         {
-                            ((uint32_t*)Buffer->Memory)[(j + YOffset) * Buffer->Width + i + XOffset] = ColorToUInt32({GetLane(ColorLinear.X, LaneCount), GetLane(ColorLinear.Y, LaneCount), GetLane(ColorLinear.Z, LaneCount)});
+                            ((uint32_t*)Buffer->Memory)[(j + YOffset) * Buffer->Width + i + XOffset] = ColorToUInt32({GetLane(FragmentColor.X, LaneCount), GetLane(FragmentColor.Y, LaneCount), GetLane(FragmentColor.Z, LaneCount)});
+#if HANDMADE_INTERNAL
+                            --Waste;
+#endif
                         }
                         ++LaneCount;
                     }
                 }
+#if HANDMADE_INTERNAL
+                GameState->RenderStats.PixelsWasted += Waste;
 #endif
             }
+#if HANDMADE_INTERNAL
+            else
+            {
+                GameState->RenderStats.PixelsSkipped += edge::StepYSize * edge::StepXSize;
+            }
+#endif
             // One step to the right
             W0 += E12.OneStepX;
             W1 += E20.OneStepX;
@@ -362,9 +364,10 @@ RasterizeRegion(game_offscreen_buffer* Buffer,
 }
 
 internal void 
-RasterizeMesh(game_memory* Memory, 
+RasterizeMesh(game_state* GameState,
+              game_memory* Memory, 
               game_offscreen_buffer* Buffer, 
-              camera* Camera, mesh* Mesh)
+              mesh* Mesh)
 {
     Assert((sizeof(vector2i) + sizeof(vector3) * 2) * Mesh->IndicesCount <= Memory->TransientStorageSize);
     void* AssignPointer = Memory->TransientStorage;
@@ -379,7 +382,7 @@ RasterizeMesh(game_memory* Memory,
     //    vector3 TrianglePositions[Mesh->IndicesCount];
     //    vector3 TriangleNormals[Mesh->IndicesCount];
     
-    VertexStage(Camera, Mesh, 
+    VertexStage(GameState, Mesh, 
                 Buffer->Width, Buffer->Height, 
                 TriangleVertices, TrianglePositions, TriangleNormals);
     
@@ -388,6 +391,9 @@ RasterizeMesh(game_memory* Memory,
         vector2i V0 = TriangleVertices[i+0];
         vector2i V1 = TriangleVertices[i+1];
         vector2i V2 = TriangleVertices[i+2];
+#if HANDMADE_INTERNAL
+        ++GameState->RenderStats.TrianglesCount;
+#endif
         
         int32_t MinX = MIN(V0.X, MIN(V1.X, V2.X));
         int32_t MinY = MIN(V0.Y, MIN(V1.Y, V2.Y));
@@ -399,7 +405,7 @@ RasterizeMesh(game_memory* Memory,
         MinY = MAX(MinY, 0);
         MaxX = MIN(MaxX, Buffer->Width - 1);
         MaxY = MIN(MaxY, Buffer->Height - 1);
-        RasterizeRegion(Buffer, MinX, MinY, MaxX, MaxY, i, TriangleVertices, TrianglePositions, TriangleNormals);
+        RasterizeRegion(GameState, Buffer, MinX, MinY, MaxX, MaxY, i, TriangleVertices, TrianglePositions, TriangleNormals);
     }
 }
 
@@ -407,6 +413,7 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
 {
     Assert(sizeof(game_state) <= Memory->PermanentStorageSize);
     game_state *GameState = (game_state *)Memory->PermanentStorage;
+    GameState->RenderStats = {};
     camera* Camera = &GameState->Camera;
     GameState->Meshes[0] = {};
     GameState->Meshes[1] = {};
@@ -470,6 +477,21 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     
     for(uint32_t i = 0; i < ArrayCount(GameState->Meshes); ++i)
     {
-        RasterizeMesh(Memory, Buffer, Camera, &GameState->Meshes[i]);
+        RasterizeMesh(GameState, Memory, Buffer, &GameState->Meshes[i]);
     }
+    
+#if HANDMADE_INTERNAL
+    uint32_t PixelsComputed = GameState->RenderStats.PixelsComputed;
+    uint32_t PixelsWasted = GameState->RenderStats.PixelsWasted;
+    char StatsMessage [256];
+    
+    Memory->Platform.DEBUGFormatString(StatsMessage,
+                                       256,
+                                       "Fragments (%dx%d)\nPixels Skipped: %d\nPixels Computed: %d\nPixels Computation Wasted: %d(%.3f%%)\n" , edge::StepXSize, edge::StepYSize, 
+                                       GameState->RenderStats.PixelsSkipped, 
+                                       PixelsComputed, 
+                                       PixelsWasted,
+                                       100.0f * (float)PixelsWasted / (float)PixelsComputed);
+    Memory->Platform.DEBUGPrintLine(StatsMessage);
+#endif
 }

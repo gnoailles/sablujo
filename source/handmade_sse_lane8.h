@@ -241,6 +241,11 @@ operator|(lane_f32 A, lane_f32 B)
     return  _mm256_or_ps(A,B);
 }
 
+inline lane_f32
+And(lane_f32 A, lane_f32 B)
+{
+    return  _mm256_and_ps(A,B);
+}
 
 inline lane_f32
 AndNot(lane_f32 A, lane_f32 B)
@@ -248,7 +253,11 @@ AndNot(lane_f32 A, lane_f32 B)
     return  _mm256_andnot_ps(A,B);
 }
 
-
+inline lane_f32
+Or(lane_f32 A, lane_f32 B)
+{
+    return  _mm256_or_ps(A,B);
+}
 /////////////
 // Lane V3
 /////////////

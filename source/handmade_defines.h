@@ -8,8 +8,9 @@
 #define Gigabytes(Value) (Megabytes(Value)*1024)
 #define Terabytes(Value) (Gigabytes(Value)*1024)
 
-#define FLT_MAX 3.402823466e+38F
-#define FLT_MIN 1.175494e-38F
+
+#define FLOAT_MAX 3.402823466e+38F
+#define FLOAT_MIN 1.175494e-38F
 
 #if HANDMADE_SLOW
 // TODO: Complete assertion macro - don't worry everyone!

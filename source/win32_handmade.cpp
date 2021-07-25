@@ -8,6 +8,12 @@
 global_variable bool IsRunning;
 global_variable win32_offscreen_buffer BackBuffer;
 
+inline void
+DEBUGWin32PrintLine(char* String)
+{
+    OutputDebugStringA(String);
+}
+
 inline FILETIME
 Win32GetLastWriteTime(char *Filename)
 {
@@ -20,7 +26,7 @@ Win32GetLastWriteTime(char *Filename)
         LastWriteTime = FindData.ftLastWriteTime;
         FindClose(FindHandle);
     }
-
+    
     return(LastWriteTime);
 }
 
@@ -62,17 +68,17 @@ Win32GetWindowDimension(HWND Window)
 internal void 
 Win32ResizeDIBSection(win32_offscreen_buffer* Buffer, int32_t Width, int32_t Height)
 {
-
+    
     if(Buffer->Memory)
     {
         VirtualFree(Buffer->Memory, 0, MEM_RELEASE);
     }
-
+    
     Buffer->Width = Width;
     Buffer->Height = Height;
     Buffer->BytesPerPixel = 4;
     Buffer->Pitch =  Buffer->Width * Buffer->BytesPerPixel;
-
+    
     // TODO: Maybe don't free first, free after and first if that fails.
     Buffer->Info.bmiHeader.biSize = sizeof(Buffer->Info.bmiHeader);
     Buffer->Info.bmiHeader.biWidth = Width;
@@ -80,7 +86,7 @@ Win32ResizeDIBSection(win32_offscreen_buffer* Buffer, int32_t Width, int32_t Hei
     Buffer->Info.bmiHeader.biPlanes = 1;
     Buffer->Info.bmiHeader.biBitCount = 32;
     Buffer->Info.bmiHeader.biCompression = BI_RGB;
-
+    
     int32_t BackBufferMemorySize = Buffer->BytesPerPixel * Width * Height;
     Buffer->Memory = VirtualAlloc(0, BackBufferMemorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 }
@@ -126,18 +132,18 @@ MainWindowCallback(HWND Window,
         {
             OutputDebugStringA("WM_ACTIVATEAPP\n");
         } break;
-
+        
         case WM_SIZE:
         {
             // win32_window_dimension Dimension = Win32GetWindowDimension(Window);
             // Win32ResizeDIBSection(&BackBuffer, Dimension.Width, Dimension.Height);
         } break;
-
+        
         case WM_PAINT:
         {
             PAINTSTRUCT Paint;
             HDC DeviceContext = BeginPaint(Window, &Paint);
-
+            
             int32_t X = Paint.rcPaint.left;
             int32_t Y = Paint.rcPaint.top;
             int32_t Width = Paint.rcPaint.right - Paint.rcPaint.left;
@@ -147,13 +153,13 @@ MainWindowCallback(HWND Window,
             Win32UpdateWindow(DeviceContext, Dimension.Width, Dimension.Height, BackBuffer);
             EndPaint(Window, &Paint);
         } break;
-
+        
         case WM_CLOSE:
         {
             // TODO: Confirmation message to the user?
             IsRunning = false;
         } break;
-
+        
         case WM_DESTROY:
         {
             // TODO: Handle as error - recreate window
@@ -180,14 +186,14 @@ CatStrings(size_t SourceACount, char *SourceA,
     {
         *Dest++ = *SourceA++;
     }
-
+    
     for(int32_t Index = 0;
         Index < SourceBCount;
         ++Index)
     {
         *Dest++ = *SourceB++;
     }
-
+    
     *Dest++ = 0;
 }
 
@@ -211,28 +217,28 @@ WinMain(HINSTANCE Instance,
             OnePastLastSlash = Scan + 1;
         }
     }
-
+    
     char SourceGameCodeDLLFilename[] = "handmade.dll";
     char SourceGameCodeDLLFullPath[MAX_PATH];
     CatStrings(OnePastLastSlash - EXEFileName, EXEFileName,
                sizeof(SourceGameCodeDLLFilename) - 1, SourceGameCodeDLLFilename,
                sizeof(SourceGameCodeDLLFullPath), SourceGameCodeDLLFullPath);
-
+    
     char TempGameCodeDLLFilename[] = "handmade_temp.dll";
     char TempGameCodeDLLFullPath[MAX_PATH];
     CatStrings(OnePastLastSlash - EXEFileName, EXEFileName,
                sizeof(TempGameCodeDLLFilename) - 1, TempGameCodeDLLFilename,
                sizeof(TempGameCodeDLLFullPath), TempGameCodeDLLFullPath);
-
+    
     LARGE_INTEGER PerfCountFrequency;
     QueryPerformanceFrequency(&PerfCountFrequency);
-
+    
     WNDCLASSA WindowClass = {};
     WindowClass.style = CS_OWNDC|CS_HREDRAW|CS_VREDRAW;
     WindowClass.lpfnWndProc = MainWindowCallback;
     WindowClass.hInstance = Instance;
     WindowClass.lpszClassName = "HandmadeRasterizerWindowClass";
-
+    
     if(RegisterClassA(&WindowClass))
     {
         int32_t DefaultWidth = 1280;
@@ -254,27 +260,29 @@ WinMain(HINSTANCE Instance,
         {
             Win32ResizeDIBSection(&BackBuffer, DefaultWidth, DefaultHeight);
             IsRunning = true;
-
+            
             win32_game_code Game = Win32LoadGameCode(SourceGameCodeDLLFullPath, TempGameCodeDLLFullPath);
-
+            
             game_memory GameMemory = {};
             GameMemory.PermanentStorageSize = Megabytes(64);
             GameMemory.TransientStorageSize = Gigabytes((uint64_t)1);
             uint64_t TotalSize = GameMemory.TransientStorageSize + GameMemory.PermanentStorageSize;
-
+            
 #ifdef HANDMADE_INTERNAL
             LPVOID BaseAddress = (LPVOID)Terabytes((uint64_t)2);
 #else
             LPVOID BaseAddress = 0;
 #endif
-
+            
             GameMemory.PermanentStorage = VirtualAlloc(BaseAddress, TotalSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
             GameMemory.TransientStorage = (uint8_t*)GameMemory.PermanentStorage + GameMemory.PermanentStorageSize;
-
+            GameMemory.Platform.DEBUGFormatString = &sprintf_s;
+            GameMemory.Platform.DEBUGPrintLine = &DEBUGWin32PrintLine;
+            
             LARGE_INTEGER LastCounter;
             QueryPerformanceCounter(&LastCounter);
             uint64_t LastCycleCount = __rdtsc();
-
+            
             while(IsRunning)
             {
                 FILETIME NewDLLWriteTime = Win32GetLastWriteTime(SourceGameCodeDLLFullPath);
@@ -282,9 +290,9 @@ WinMain(HINSTANCE Instance,
                 {
                     Win32UnloadGameCode(&Game);
                     Game = Win32LoadGameCode(SourceGameCodeDLLFullPath,
-                                                TempGameCodeDLLFullPath);
+                                             TempGameCodeDLLFullPath);
                 }
-
+                
                 MSG Message;
                 while(PeekMessageA(&Message, 0, 0, 0, PM_REMOVE))
                 {
@@ -292,11 +300,11 @@ WinMain(HINSTANCE Instance,
                     {
                         IsRunning = false;
                     }
-
+                    
                     TranslateMessage(&Message);
                     DispatchMessageA(&Message);
                 }
-
+                
                 game_offscreen_buffer GameBuffer = {};
                 GameBuffer.Memory = BackBuffer.Memory;
                 GameBuffer.Width = BackBuffer.Width;
@@ -306,26 +314,26 @@ WinMain(HINSTANCE Instance,
                 {
                     Game.UpdateAndRender(&GameMemory, &GameBuffer);
                 }
-
+                
                 HDC DeviceContext = GetDC(Window);
                 win32_window_dimension Dimension = Win32GetWindowDimension(Window);
                 Win32UpdateWindow(DeviceContext, Dimension.Width, Dimension.Height, BackBuffer);
                 ReleaseDC(Window, DeviceContext);
-
+                
                 uint64_t EndCycleCount = __rdtsc();
                 LARGE_INTEGER EndCounter;
                 QueryPerformanceCounter(&EndCounter);
-
+                
                 uint64_t CyclesElapsed = EndCycleCount - LastCycleCount;
                 int64_t CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
                 float MSPerFrame = (float)((1000.0f*(double)CounterElapsed) / (double)PerfCountFrequency.QuadPart);
                 float FPS = PerfCountFrequency.QuadPart / (float)CounterElapsed;
                 float MCPF = (CyclesElapsed / (1000.0f * 1000.0f));
-
+                
                 char PerformanceReportBuffer [256];
-                sprintf_s(PerformanceReportBuffer, "%.02fms/f, %.02fFPS,  %.02fMc/f\n", MSPerFrame, FPS, MCPF);
+                sprintf_s(PerformanceReportBuffer, "%.02fms/f, %.02fFPS,  %.02fMc/f\n\n", MSPerFrame, FPS, MCPF);
                 OutputDebugStringA(PerformanceReportBuffer);
-
+                
                 LastCycleCount = EndCycleCount;
                 LastCounter = EndCounter;
             }
@@ -338,7 +346,7 @@ WinMain(HINSTANCE Instance,
             sprintf_s(ErrorMessage, "Fatal: Error creating the Window, Error : %d\n", Error);
             OutputDebugStringA(ErrorMessage);
         }
-
+        
     }
     else
     {
