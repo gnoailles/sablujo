@@ -1,4 +1,4 @@
-#if !defined(HANDMADE_MATHS_H)
+#if !defined(SABLUJO_MATHS_H)
 
 #define PI_FLOAT 3.141592653589793238463f
 #define PI 3.141592653589793238463
@@ -16,7 +16,7 @@
 //TODO: Replace call to math.h
 #include <math.h>
 
-#include "handmade_defines.h"
+#include "sablujo_defines.h"
 
 
 struct matrix4
@@ -239,5 +239,5 @@ inline bool VectorIsAnyPositive(vector4i* Vector)
     return Vector->X >= 0 || Vector->Y >= 0 || Vector->Z >= 0 || Vector->W >= 0;
 }
 
-#define HANDMADE_MATHS_H
+#define SABLUJO_MATHS_H
 #endif

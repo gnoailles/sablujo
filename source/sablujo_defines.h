@@ -1,4 +1,4 @@
-#if !defined(HANDMADE_DEFINES_H)
+#if !defined(SABLUJO_DEFINES_H)
 #define internal static
 #define local_persist static
 #define global_variable static 
@@ -12,7 +12,7 @@
 #define FLOAT_MAX 3.402823466e+38F
 #define FLOAT_MIN 1.175494e-38F
 
-#if HANDMADE_SLOW
+#if SABLUJO_SLOW
 // TODO: Complete assertion macro - don't worry everyone!
 #define Assert(Expression) if(!(Expression)) {*(int32_t *)0 = 0;}
 #else
@@ -22,5 +22,5 @@
 #define ArrayCount(Value) (sizeof(Value) / sizeof((Value)[0]))
 
 
-#define HANDMADE_DEFINES_H
+#define SABLUJO_DEFINES_H
 #endif

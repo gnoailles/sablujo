@@ -1,14 +1,14 @@
-#ifndef HANDMADE_SSE_H
+#ifndef SABLUJO_SSE_H
 
 #define LANE_WIDTH 8
 
 #if LANE_WIDTH == 8
 
-#include "handmade_sse_lane8.h"
+#include "sablujo_sse_lane8.h"
 
 #elif LANE_WIDTH == 4
 
-#include "handmade_sse_lane4.h"
+#include "sablujo_sse_lane4.h"
 
 #elif LANE_WIDTH == 1
 
@@ -584,5 +584,5 @@ LinearToSRGB(lane_f32 A)
 }
 
 
-#define HANDMADE_SSE_H
-#endif //HANDMADE_SSE_H
+#define SABLUJO_SSE_H
+#endif //SABLUJO_SSE_H

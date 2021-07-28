@@ -1,10 +1,10 @@
-#include "handmade.h"
+#include "sablujo.h"
 
-#include <windows.h>
 #include <stdio.h>
-#include "win32_handmade.h"
+#include "win32_sablujo.h"
+#include "dx12_renderer.h"
 
-// TODO: Temporary global
+// TODO(Gouzi): Temporary global
 global_variable bool IsRunning;
 global_variable win32_offscreen_buffer BackBuffer;
 
@@ -79,7 +79,7 @@ Win32ResizeDIBSection(win32_offscreen_buffer* Buffer, int32_t Width, int32_t Hei
     Buffer->BytesPerPixel = 4;
     Buffer->Pitch =  Buffer->Width * Buffer->BytesPerPixel;
     
-    // TODO: Maybe don't free first, free after and first if that fails.
+    // TODO(Gouzi): Maybe don't free first, free after and first if that fails.
     Buffer->Info.bmiHeader.biSize = sizeof(Buffer->Info.bmiHeader);
     Buffer->Info.bmiHeader.biWidth = Width;
     Buffer->Info.bmiHeader.biHeight = -Height;
@@ -93,16 +93,16 @@ Win32ResizeDIBSection(win32_offscreen_buffer* Buffer, int32_t Width, int32_t Hei
 
 internal void
 Win32UpdateWindow(HDC DeviceContext, 
-                  int32_t WindowWidth, int32_t WindowHeight, 
+                  win32_window_dimension Size, 
                   win32_offscreen_buffer Buffer)
 {
 #if 0
-    int32_t PaddingX = (WindowWidth - Buffer.Width) / 2;
-    int32_t PaddingY = (WindowHeight - Buffer.Height) / 2;
-    PatBlt(DeviceContext, 0,                       0,                       PaddingX,               WindowHeight, BLACKNESS);
-    PatBlt(DeviceContext, PaddingX + Buffer.Width, 0,                       PaddingX,               WindowHeight, BLACKNESS);
-    PatBlt(DeviceContext, PaddingX,                0,                       WindowWidth - PaddingX, PaddingY,     BLACKNESS);
-    PatBlt(DeviceContext, PaddingX,                PaddingY + Buffer.Height, WindowWidth - PaddingX, PaddingY, BLACKNESS);
+    int32_t PaddingX = (Size.Width - Buffer.Width) / 2;
+    int32_t PaddingY = (Size.Height - Buffer.Height) / 2;
+    PatBlt(DeviceContext, 0,                       0,                        PaddingX,              Size.Height, BLACKNESS);
+    PatBlt(DeviceContext, PaddingX + Buffer.Width, 0,                        PaddingX,              Size.Height, BLACKNESS);
+    PatBlt(DeviceContext, PaddingX,                0,                        Size.Width - PaddingX, PaddingY,    BLACKNESS);
+    PatBlt(DeviceContext, PaddingX,                PaddingY + Buffer.Height, Size.Width - PaddingX, PaddingY,    BLACKNESS);
     StretchDIBits(DeviceContext,
                   PaddingX, PaddingY, Buffer.Width, Buffer.Height,
                   0, 0, Buffer.Width, Buffer.Height,
@@ -132,37 +132,22 @@ MainWindowCallback(HWND Window,
         {
             OutputDebugStringA("WM_ACTIVATEAPP\n");
         } break;
-        
+        /*
         case WM_SIZE:
         {
-            // win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-            // Win32ResizeDIBSection(&BackBuffer, Dimension.Width, Dimension.Height);
-        } break;
-        
-        case WM_PAINT:
-        {
-            PAINTSTRUCT Paint;
-            HDC DeviceContext = BeginPaint(Window, &Paint);
-            
-            int32_t X = Paint.rcPaint.left;
-            int32_t Y = Paint.rcPaint.top;
-            int32_t Width = Paint.rcPaint.right - Paint.rcPaint.left;
-            int32_t Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
-            
             win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-            Win32UpdateWindow(DeviceContext, Dimension.Width, Dimension.Height, BackBuffer);
-            EndPaint(Window, &Paint);
+            Win32ResizeDIBSection(&BackBuffer, Dimension.Width, Dimension.Height);
         } break;
-        
+        */
         case WM_CLOSE:
         {
-            // TODO: Confirmation message to the user?
+            // TODO(Gouzi): Confirmation message to the user?
             IsRunning = false;
         } break;
         
         case WM_DESTROY:
         {
-            // TODO: Handle as error - recreate window
+            // TODO(Gouzi): Handle as error - recreate window
             IsRunning = false;
         } break;
         
@@ -179,7 +164,7 @@ CatStrings(size_t SourceACount, char *SourceA,
            size_t SourceBCount, char *SourceB,
            size_t DestCount, char *Dest)
 {
-    // TODO: Dest bounds checking!
+    // TODO(Gouzi): Dest bounds checking!
     for(int32_t Index = 0;
         Index < SourceACount;
         ++Index)
@@ -218,13 +203,13 @@ WinMain(HINSTANCE Instance,
         }
     }
     
-    char SourceGameCodeDLLFilename[] = "handmade.dll";
+    char SourceGameCodeDLLFilename[] = "sablujo.dll";
     char SourceGameCodeDLLFullPath[MAX_PATH];
     CatStrings(OnePastLastSlash - EXEFileName, EXEFileName,
                sizeof(SourceGameCodeDLLFilename) - 1, SourceGameCodeDLLFilename,
                sizeof(SourceGameCodeDLLFullPath), SourceGameCodeDLLFullPath);
     
-    char TempGameCodeDLLFilename[] = "handmade_temp.dll";
+    char TempGameCodeDLLFilename[] = "sablujo_temp.dll";
     char TempGameCodeDLLFullPath[MAX_PATH];
     CatStrings(OnePastLastSlash - EXEFileName, EXEFileName,
                sizeof(TempGameCodeDLLFilename) - 1, TempGameCodeDLLFilename,
@@ -234,7 +219,7 @@ WinMain(HINSTANCE Instance,
     QueryPerformanceFrequency(&PerfCountFrequency);
     
     WNDCLASSA WindowClass = {};
-    WindowClass.style = CS_OWNDC|CS_HREDRAW|CS_VREDRAW;
+    WindowClass.style = CS_HREDRAW|CS_VREDRAW;
     WindowClass.lpfnWndProc = MainWindowCallback;
     WindowClass.hInstance = Instance;
     WindowClass.lpszClassName = "HandmadeRasterizerWindowClass";
@@ -243,6 +228,10 @@ WinMain(HINSTANCE Instance,
     {
         int32_t DefaultWidth = 1280;
         int32_t DefaultHeight = 720;
+        
+        RECT WindowRect = {0, 0, DefaultWidth, DefaultHeight};
+        AdjustWindowRect(&WindowRect, WS_OVERLAPPEDWINDOW|WS_VISIBLE, FALSE);
+        
         HWND Window = 
             CreateWindowExA(0, 
                             WindowClass.lpszClassName, 
@@ -250,25 +239,28 @@ WinMain(HINSTANCE Instance,
                             WS_OVERLAPPEDWINDOW|WS_VISIBLE,
                             CW_USEDEFAULT,
                             CW_USEDEFAULT,
-                            DefaultWidth,
-                            DefaultHeight,
+                            WindowRect.right - WindowRect.left,
+                            WindowRect.bottom - WindowRect.top,
                             0,
                             0,
                             Instance,
                             0);
         if(Window)
         {
+            
+            // Init Renderer
+            win32_window_dimension DefaultDimension = Win32GetWindowDimension(Window);
+            Assert(DefaultDimension.Width == DefaultWidth && DefaultDimension.Height == DefaultHeight);
+            DX12InitRenderer(Window, DefaultDimension);
             Win32ResizeDIBSection(&BackBuffer, DefaultWidth, DefaultHeight);
-            IsRunning = true;
             
-            win32_game_code Game = Win32LoadGameCode(SourceGameCodeDLLFullPath, TempGameCodeDLLFullPath);
-            
+            // Init Memory
             game_memory GameMemory = {};
             GameMemory.PermanentStorageSize = Megabytes(64);
             GameMemory.TransientStorageSize = Gigabytes((uint64_t)1);
             uint64_t TotalSize = GameMemory.TransientStorageSize + GameMemory.PermanentStorageSize;
             
-#ifdef HANDMADE_INTERNAL
+#ifdef SABLUJO_INTERNAL
             LPVOID BaseAddress = (LPVOID)Terabytes((uint64_t)2);
 #else
             LPVOID BaseAddress = 0;
@@ -279,6 +271,11 @@ WinMain(HINSTANCE Instance,
             GameMemory.Platform.DEBUGFormatString = &sprintf_s;
             GameMemory.Platform.DEBUGPrintLine = &DEBUGWin32PrintLine;
             
+            //Init Game
+            win32_game_code Game = Win32LoadGameCode(SourceGameCodeDLLFullPath, TempGameCodeDLLFullPath);
+            
+            // Setup Game Loop
+            IsRunning = true;
             LARGE_INTEGER LastCounter;
             QueryPerformanceCounter(&LastCounter);
             uint64_t LastCycleCount = __rdtsc();
@@ -315,10 +312,14 @@ WinMain(HINSTANCE Instance,
                     Game.UpdateAndRender(&GameMemory, &GameBuffer);
                 }
                 
+                /*
                 HDC DeviceContext = GetDC(Window);
                 win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-                Win32UpdateWindow(DeviceContext, Dimension.Width, Dimension.Height, BackBuffer);
+                Win32UpdateWindow(DeviceContext, Dimension, BackBuffer);
                 ReleaseDC(Window, DeviceContext);
+                */
+                
+                DX12Present();
                 
                 uint64_t EndCycleCount = __rdtsc();
                 LARGE_INTEGER EndCounter;
@@ -340,7 +341,7 @@ WinMain(HINSTANCE Instance,
         }
         else
         {
-            // TODO: Logging
+            // TODO(Gouzi): Logging
             DWORD Error = GetLastError();
             char ErrorMessage [128];
             sprintf_s(ErrorMessage, "Fatal: Error creating the Window, Error : %d\n", Error);
@@ -350,7 +351,7 @@ WinMain(HINSTANCE Instance,
     }
     else
     {
-        // TODO: Logging
+        // TODO(Gouzi): Logging
     }
     return 0;
 }

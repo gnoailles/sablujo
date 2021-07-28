@@ -1,6 +1,6 @@
-#include "handmade.h"
-#include "geometry.h"
-#include "handmade_sse.h"
+#include "sablujo.h"
+#include "sablujo_geometry.h"
+#include "sablujo_sse.h"
 
 // internal void
 // RenderWeirdGradient(game_offscreen_buffer* Buffer, int32_t XOffset, int32_t YOffset)
@@ -117,7 +117,7 @@ VertexStage(game_state* GameState, mesh* Mesh,
         OutputVertices[j]  = {x, y};
         OutputPositions[j] = vector3{ModelVertex.X, ModelVertex.Y, ModelVertex.Z};
         OutputNormals[j]   = TransformedNormal;
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
         ++GameState->RenderStats.VerticesCount;
 #endif
     }
@@ -322,7 +322,7 @@ RasterizeRegion(game_state* GameState,
                 lane_v3 FragmentColor = FragmentStage(LanePositions, LaneNormals);
                 
                 int32_t LaneCount = 0;
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
                 GameState->RenderStats.PixelsComputed += LANE_WIDTH;
                 int32_t Waste = LANE_WIDTH;
 #endif
@@ -333,18 +333,18 @@ RasterizeRegion(game_state* GameState,
                         if(GetLane(Mask, LaneCount))
                         {
                             ((uint32_t*)Buffer->Memory)[(j + YOffset) * Buffer->Width + i + XOffset] = ColorToUInt32({GetLane(FragmentColor.X, LaneCount), GetLane(FragmentColor.Y, LaneCount), GetLane(FragmentColor.Z, LaneCount)});
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
                             --Waste;
 #endif
                         }
                         ++LaneCount;
                     }
                 }
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
                 GameState->RenderStats.PixelsWasted += Waste;
 #endif
             }
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
             else
             {
                 GameState->RenderStats.PixelsSkipped += edge::StepYSize * edge::StepXSize;
@@ -391,7 +391,7 @@ RasterizeMesh(game_state* GameState,
         vector2i V0 = TriangleVertices[i+0];
         vector2i V1 = TriangleVertices[i+1];
         vector2i V2 = TriangleVertices[i+2];
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
         ++GameState->RenderStats.TrianglesCount;
 #endif
         
@@ -480,7 +480,7 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
         RasterizeMesh(GameState, Memory, Buffer, &GameState->Meshes[i]);
     }
     
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
     uint32_t PixelsComputed = GameState->RenderStats.PixelsComputed;
     uint32_t PixelsWasted = GameState->RenderStats.PixelsWasted;
     char StatsMessage [256];

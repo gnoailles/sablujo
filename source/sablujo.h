@@ -1,8 +1,8 @@
-#if !defined(HANDMADE_H)
+#if !defined(SABLUJO_H)
 
 #include <stdint.h>
-#include "handmade_defines.h"
-#include "handmade_maths.h"
+#include "sablujo_defines.h"
+#include "sablujo_maths.h"
 
 /////////////////////////
 // Platform abstraction
@@ -15,7 +15,7 @@ typedef void debug_platform_print_line(char* String);
 
 struct platform_calls
 {
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
     debug_platform_format_string* DEBUGFormatString;
     debug_platform_print_line* DEBUGPrintLine;
 #endif
@@ -68,7 +68,7 @@ struct mesh
 #define SPHERE_VERTEX_COUNT (SPHERE_SUBDIV * SPHERE_SUBDIV + 2)
 #define SPHERE_INDEX_COUNT (SPHERE_SUBDIV * 3 * 2 + (SPHERE_SUBDIV - 1) * (SPHERE_SUBDIV - 1) * 6)
 
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
 struct render_stats
 {
     uint32_t VerticesCount;
@@ -80,7 +80,7 @@ struct render_stats
 #endif
 struct game_state
 {
-#if HANDMADE_INTERNAL
+#if SABLUJO_INTERNAL
     render_stats RenderStats;
 #endif
     camera Camera;
@@ -88,5 +88,5 @@ struct game_state
     float YRot;
 };
 
-#define HANDMADE_H
+#define SABLUJO_H
 #endif

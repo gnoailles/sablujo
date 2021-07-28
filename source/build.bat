@@ -3,16 +3,16 @@
 set OptimOrDebugFlags=-MTd -Od -fp:fast -Oi
 set WarningsHandlingFlags=-WX -W4 -wd4201 -wd4100 -wd4189 -wd4505
 set CommonCompilerFlags=-nologo -arch:AVX2 -EHa- -EHsc -FC -Gm- -GR- -Z7 %OptimOrDebugFlags% %WarningsHandlingFlags%
-set CommonCompilerDefines=-DHANDMADE_INTERNAL -DHANDMADE_SLOW -DHANDMADE_WIN32
+set CommonCompilerDefines=-DSABLUJO_INTERNAL -DSABLUJO_SLOW -DSABLUJO_WIN32
 set CommonLinkerFlags=-incremental:no -opt:ref
 
-set GameSourceFiles=..\source\handmade.cpp ..\source\handmade_maths.cpp ..\source\geometry.cpp
-set GameCompilerFlags=-LD -Fmhandmade.map %CommonCompilerFlags% %CommonCompilerDefines%
-set GameLinkerFlags=-PDB:handmade_%random%.pdb -EXPORT:GameUpdateAndRender %CommonLinkerFlags%
+set GameSourceFiles=..\source\sablujo.cpp ..\source\sablujo_maths.cpp ..\source\sablujo_geometry.cpp
+set GameCompilerFlags=-LD -Fmsablujo.map %CommonCompilerFlags% %CommonCompilerDefines%
+set GameLinkerFlags=-PDB:sablujo_%random%.pdb -EXPORT:GameUpdateAndRender %CommonLinkerFlags%
 
-set PlatformSourceFiles=..\source\win32_handmade.cpp
-set PlatformCompilerFlags=-Fmwin32_handmade.map %CommonCompilerFlags% %CommonCompilerDefines%
-set PlatformLinkerFlags=user32.lib gdi32.lib %CommonLinkerFlags%
+set PlatformSourceFiles=..\source\win32_sablujo.cpp ..\source\dx12_renderer.cpp
+set PlatformCompilerFlags=-Fmwin32_sablujo.map %CommonCompilerFlags% %CommonCompilerDefines%
+set PlatformLinkerFlags=user32.lib gdi32.lib d3d12.lib dxgi.lib %CommonLinkerFlags%
 
 
 REM Setup cl environment

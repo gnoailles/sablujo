@@ -1,4 +1,4 @@
-#ifndef HANDMADE_SSE_LANE4_H
+#ifndef SABLUJO_SSE_LANE4_H
 
 #include <immintrin.h>
 
@@ -341,5 +341,5 @@ CastLaneI32ToF32(lane_i32 A)
     return _mm_castsi128_ps(A);
 }
 
-#define HANDMADE_SSE_LANE4_H
-#endif //HANDMADE_SSE_LANE4_H
+#define SABLUJO_SSE_LANE4_H
+#endif //SABLUJO_SSE_LANE4_H

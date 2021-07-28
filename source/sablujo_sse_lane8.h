@@ -1,4 +1,4 @@
-#ifndef HANDMADE_SSE_LANE8_H
+#ifndef SABLUJO_SSE_LANE8_H
 
 #include <immintrin.h>
 
@@ -351,5 +351,5 @@ CastLaneI32ToF32(lane_i32 A)
 #define CastToLaneI32(A) (*(__m256i*)&(A))
 #define CastToLaneF32(A) (*(__m256*)&(A))
 */
-#define HANDMADE_SSE_LANE8_H
-#endif //HANDMADE_SSE_LANE8_H
+#define SABLUJO_SSE_LANE8_H
+#endif //SABLUJO_SSE_LANE8_H

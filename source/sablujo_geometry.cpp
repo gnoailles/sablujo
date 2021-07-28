@@ -1,4 +1,4 @@
-#include "geometry.h"
+#include "sablujo_geometry.h"
 
 void CreateSphere(uint32_t LatitudeCount, uint32_t LongitudeCount, 
                   vector4* OutputVertices, vector3* OutputNormals, uint32_t* OutputIndices,
