@@ -6,7 +6,7 @@
 
 // TODO(Gouzi): Temporary global
 global_variable bool IsRunning;
-global_variable win32_offscreen_buffer BackBuffer;
+//global_variable win32_offscreen_buffer BackBuffer;
 
 inline void
 DEBUGWin32PrintLine(char* String)
@@ -65,6 +65,7 @@ Win32GetWindowDimension(HWND Window)
     return Result;
 }
 
+#if RENDERING_API == WIN32_RENDERER
 internal void 
 Win32ResizeDIBSection(win32_offscreen_buffer* Buffer, int32_t Width, int32_t Height)
 {
@@ -118,6 +119,7 @@ Win32UpdateWindow(HDC DeviceContext,
                   DIB_RGB_COLORS, SRCCOPY);
 #endif
 }
+#endif
 
 LRESULT CALLBACK 
 MainWindowCallback(HWND Window, 
@@ -222,7 +224,7 @@ WinMain(HINSTANCE Instance,
     WindowClass.style = CS_HREDRAW|CS_VREDRAW;
     WindowClass.lpfnWndProc = MainWindowCallback;
     WindowClass.hInstance = Instance;
-    WindowClass.lpszClassName = "HandmadeRasterizerWindowClass";
+    WindowClass.lpszClassName = "SablujoWindowClass";
     
     if(RegisterClassA(&WindowClass))
     {
@@ -235,7 +237,7 @@ WinMain(HINSTANCE Instance,
         HWND Window = 
             CreateWindowExA(0, 
                             WindowClass.lpszClassName, 
-                            "Handmade Rasterizer",
+                            "Sablujo",
                             WS_OVERLAPPEDWINDOW|WS_VISIBLE,
                             CW_USEDEFAULT,
                             CW_USEDEFAULT,
@@ -251,8 +253,12 @@ WinMain(HINSTANCE Instance,
             // Init Renderer
             win32_window_dimension DefaultDimension = Win32GetWindowDimension(Window);
             Assert(DefaultDimension.Width == DefaultWidth && DefaultDimension.Height == DefaultHeight);
-            DX12InitRenderer(Window, DefaultDimension);
+#if RENDERING_API == WIN32_RENDERER
+            win32_offscreen_buffer BackBuffer;
             Win32ResizeDIBSection(&BackBuffer, DefaultWidth, DefaultHeight);
+#elif RENDERING_API == DX12
+            win32_offscreen_buffer BackBuffer = DX12InitRenderer(Window, DefaultDimension);
+#endif
             
             // Init Memory
             game_memory GameMemory = {};
@@ -262,14 +268,14 @@ WinMain(HINSTANCE Instance,
             
 #ifdef SABLUJO_INTERNAL
             LPVOID BaseAddress = (LPVOID)Terabytes((uint64_t)2);
+            GameMemory.Platform.DEBUGFormatString = &sprintf_s;
+            GameMemory.Platform.DEBUGPrintLine = &DEBUGWin32PrintLine;
 #else
             LPVOID BaseAddress = 0;
 #endif
             
             GameMemory.PermanentStorage = VirtualAlloc(BaseAddress, TotalSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
             GameMemory.TransientStorage = (uint8_t*)GameMemory.PermanentStorage + GameMemory.PermanentStorageSize;
-            GameMemory.Platform.DEBUGFormatString = &sprintf_s;
-            GameMemory.Platform.DEBUGPrintLine = &DEBUGWin32PrintLine;
             
             //Init Game
             win32_game_code Game = Win32LoadGameCode(SourceGameCodeDLLFullPath, TempGameCodeDLLFullPath);
@@ -312,14 +318,16 @@ WinMain(HINSTANCE Instance,
                     Game.UpdateAndRender(&GameMemory, &GameBuffer);
                 }
                 
-                /*
+#if RENDERING_API == WIN32_RENDERER
                 HDC DeviceContext = GetDC(Window);
                 win32_window_dimension Dimension = Win32GetWindowDimension(Window);
                 Win32UpdateWindow(DeviceContext, Dimension, BackBuffer);
                 ReleaseDC(Window, DeviceContext);
-                */
-                
+#elif RENDERING_API == DX12
+                DX12Render(&BackBuffer);
                 DX12Present();
+#endif
+                
                 
                 uint64_t EndCycleCount = __rdtsc();
                 LARGE_INTEGER EndCounter;
@@ -338,6 +346,9 @@ WinMain(HINSTANCE Instance,
                 LastCycleCount = EndCycleCount;
                 LastCounter = EndCounter;
             }
+#if RENDERING_API == DX12
+            DX12ShutdownRenderer();
+#endif
         }
         else
         {

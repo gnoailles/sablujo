@@ -2,11 +2,12 @@
 
 #include "win32_sablujo.h"
 
-void DX12InitRenderer(HWND Window, win32_window_dimension Dimension);
+win32_offscreen_buffer DX12InitRenderer(HWND Window, win32_window_dimension Dimension);
+
+void DX12Render(win32_offscreen_buffer* Buffer);
 
 void DX12Present();
 
 void DX12ShutdownRenderer();
-
 #define DX12_RENDERER_H
 #endif

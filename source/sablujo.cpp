@@ -413,7 +413,9 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
 {
     Assert(sizeof(game_state) <= Memory->PermanentStorageSize);
     game_state *GameState = (game_state *)Memory->PermanentStorage;
+#if SABLUJO_INTERNAL
     GameState->RenderStats = {};
+#endif
     camera* Camera = &GameState->Camera;
     GameState->Meshes[0] = {};
     GameState->Meshes[1] = {};

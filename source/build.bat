@@ -1,9 +1,10 @@
 @echo off
 
-set OptimOrDebugFlags=-MTd -Od -fp:fast -Oi
+set OptimOrDebugFlags=-MT -O2 -fp:fast -Oi
 set WarningsHandlingFlags=-WX -W4 -wd4201 -wd4100 -wd4189 -wd4505
 set CommonCompilerFlags=-nologo -arch:AVX2 -EHa- -EHsc -FC -Gm- -GR- -Z7 %OptimOrDebugFlags% %WarningsHandlingFlags%
 set CommonCompilerDefines=-DSABLUJO_INTERNAL -DSABLUJO_SLOW -DSABLUJO_WIN32
+REM set CommonCompilerDefines=-DSABLUJO_WIN32
 set CommonLinkerFlags=-incremental:no -opt:ref
 
 set GameSourceFiles=..\source\sablujo.cpp ..\source\sablujo_maths.cpp ..\source\sablujo_geometry.cpp
@@ -12,7 +13,7 @@ set GameLinkerFlags=-PDB:sablujo_%random%.pdb -EXPORT:GameUpdateAndRender %Commo
 
 set PlatformSourceFiles=..\source\win32_sablujo.cpp ..\source\dx12_renderer.cpp
 set PlatformCompilerFlags=-Fmwin32_sablujo.map %CommonCompilerFlags% %CommonCompilerDefines%
-set PlatformLinkerFlags=user32.lib gdi32.lib d3d12.lib dxgi.lib %CommonLinkerFlags%
+set PlatformLinkerFlags=user32.lib gdi32.lib d3d12.lib dxgi.lib D3DCompiler.lib %CommonLinkerFlags%
 
 
 REM Setup cl environment

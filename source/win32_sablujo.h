@@ -3,9 +3,16 @@
 #include <windows.h>
 #include "sablujo.h"
 
+
+#define DX12 1
+#define WIN32_RENDERER 2
+#define RENDERING_API WIN32_RENDERER
+
 struct win32_offscreen_buffer
 {
+#if RENDERING_API == WIN32_RENDERER
     BITMAPINFO Info;
+#endif
     void* Memory;
     int32_t Width;
     int32_t Height;
