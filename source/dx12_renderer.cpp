@@ -51,10 +51,10 @@ global_variable D3D12_RECT ScissorRect;
 
 // App resources.
 
-#if TRIANGLE_EXAMPLE
+
 global_variable ComPtr<ID3D12Resource> VertexBuffer;
 global_variable D3D12_VERTEX_BUFFER_VIEW VertexBufferView;
-#else
+#if !TRIANGLE_EXAMPLE
 global_variable ComPtr<ID3D12Resource> BackBuffer;
 global_variable D3D12_SUBRESOURCE_FOOTPRINT BackBufferFootPrint;
 #endif
@@ -82,6 +82,77 @@ void DX12WaitForGpu()
     Synchronization.FenceValues[CurrentFrame]++;
 }
 
+mesh_handle
+DX12CreateVertexBuffer(vector3* Positions, 
+                       vector3* Normals, 
+                       uint32_t VerticesCount)
+{
+    const uint32_t VertexSize = sizeof(Positions[0]) + sizeof(Normals[0]);
+    const uint32_t VertexBufferSize = VertexSize * VerticesCount;
+    
+    // Note: using upload heaps to transfer static data like vert buffers is not 
+    // recommended. Every time the GPU needs it, the upload heap will be marshalled 
+    // over. Please read up on Default Heap usage. An upload heap is used here for 
+    // code simplicity and because there are very few verts to actually transfer.
+    D3D12_HEAP_PROPERTIES UploadHeapProperties = {};
+    UploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+    //UploadHeapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    //UploadHeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+    //UploadHeapProperties.CreationNodeMask = 1; Passing zero is equivalent to passing one, in order to simplify the usage of single-GPU adapters.
+    //UploadHeapProperties.VisibleNodeMask = 1; Passing zero is equivalent to passing one, in order to simplify the usage of single-GPU adapters.
+    ComPtr<ID3D12Resource> StagingBuffer;
+    
+    D3D12_RESOURCE_DESC VertexBufferDesc = {};
+    VertexBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    //VertexBufferDesc.Alignment = 0;
+    VertexBufferDesc.Width = VertexBufferSize;
+    VertexBufferDesc.Height = 1;
+    VertexBufferDesc.DepthOrArraySize = 1;
+    VertexBufferDesc.MipLevels = 1;
+    VertexBufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+    VertexBufferDesc.SampleDesc.Count = 1;
+    //VertexBufferDesc.SampleDesc.Quality = 0;
+    VertexBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    VertexBufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    
+    ThrowIfFailed(Device->CreateCommittedResource(&UploadHeapProperties,
+                                                  D3D12_HEAP_FLAG_NONE,
+                                                  &VertexBufferDesc,
+                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                  nullptr,
+                                                  IID_PPV_ARGS(&StagingBuffer)));
+    
+    D3D12_HEAP_PROPERTIES DefaultHeapProperties = {};
+    DefaultHeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
+    
+    ThrowIfFailed(Device->CreateCommittedResource(&DefaultHeapProperties,
+                                                  D3D12_HEAP_FLAG_NONE,
+                                                  &VertexBufferDesc,
+                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                  nullptr,
+                                                  IID_PPV_ARGS(&VertexBuffer)));
+    
+    
+    // Copy the triangle data to the vertex buffer.
+    uint8_t* VertexDataBegin;
+    D3D12_RANGE ReadRange = {0, 0}; // We do not intend to read from this resource on the CPU.
+    ThrowIfFailed(StagingBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&VertexDataBegin)));
+    uint32_t PositionsSize = sizeof(Positions[0]) * VerticesCount;
+    memcpy(VertexDataBegin, Positions, PositionsSize);
+    memcpy(VertexDataBegin + PositionsSize, Normals, sizeof(Normals[0]) * VerticesCount);
+    StagingBuffer->Unmap(0, nullptr);
+    
+    CommandList->CopyBufferRegion(VertexBuffer.Get(), 0, 
+                                  StagingBuffer.Get(), 0, 
+                                  VertexBufferSize);
+    
+    // Initialize the vertex buffer view.
+    VertexBufferView.BufferLocation = VertexBuffer->GetGPUVirtualAddress();
+    VertexBufferView.StrideInBytes = VertexSize;
+    VertexBufferView.SizeInBytes = VertexBufferSize;
+    
+    return {};
+}
 
 #if TRIANGLE_EXAMPLE
 void 

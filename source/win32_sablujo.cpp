@@ -266,6 +266,9 @@ WinMain(HINSTANCE Instance,
             GameMemory.TransientStorageSize = Gigabytes((uint64_t)1);
             uint64_t TotalSize = GameMemory.TransientStorageSize + GameMemory.PermanentStorageSize;
             
+#if RENDERING_API == DX12
+            GameMemory.Renderer.CreateVertexBuffer = &DX12CreateVertexBuffer;
+#endif
 #ifdef SABLUJO_INTERNAL
             LPVOID BaseAddress = (LPVOID)Terabytes((uint64_t)2);
             GameMemory.Platform.DEBUGFormatString = &sprintf_s;

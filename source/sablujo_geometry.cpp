@@ -1,7 +1,7 @@
 #include "sablujo_geometry.h"
 
 void CreateSphere(uint32_t LatitudeCount, uint32_t LongitudeCount, 
-                  vector4* OutputVertices, vector3* OutputNormals, uint32_t* OutputIndices,
+                  vector3* OutputVertices, vector3* OutputNormals, uint32_t* OutputIndices,
                   uint32_t OutVerticesSize, uint32_t OutIndicesSize)
 {
     Assert(OutVerticesSize >= LatitudeCount * LongitudeCount);
@@ -11,7 +11,7 @@ void CreateSphere(uint32_t LatitudeCount, uint32_t LongitudeCount,
     uint32_t OutputOffset = 0;
     
     //North Cap
-    OutputVertices[OutputOffset] = {0.0f, Radius, 0.0f, 1.0f};
+    OutputVertices[OutputOffset] = {0.0f, Radius, 0.0f};
     OutputNormals[OutputOffset] = {0.0f, 1.0f, 0.0f};
     ++OutputOffset;
     
@@ -31,13 +31,13 @@ void CreateSphere(uint32_t LatitudeCount, uint32_t LongitudeCount,
             const float X = (float)(CosPhi * SinTheta);
             const float Z = (float)(SinPhi * SinTheta);
             
-            OutputVertices[OutputOffset] = {X * Radius, (float)CosTheta * Radius, Z * Radius, 1.0f};
+            OutputVertices[OutputOffset] = {X * Radius, (float)CosTheta * Radius, Z * Radius};
             OutputNormals[OutputOffset] = {X, (float)CosTheta, Z, 0.0f};
             ++OutputOffset;
         }
     }
     //South Cap
-    OutputVertices[OutputOffset] = {0.0f, -Radius, 0.0f, 1.0f};
+    OutputVertices[OutputOffset] = {0.0f, -Radius, 0.0f};
     OutputNormals[OutputOffset] = {0.0f, -1.0f, 0.0f};
     
     OutputOffset = 0;

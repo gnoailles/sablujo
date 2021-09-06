@@ -104,7 +104,8 @@ VertexStage(game_state* GameState, mesh* Mesh,
     for (uint32_t j = 0; j < Mesh->IndicesCount; j++) 
     {
         Assert(Mesh->Indices[j] < Mesh->VerticesCount);
-        vector4 ModelVertex       = MultPointMatrix(&Mesh->Transform, &Mesh->Vertices[Mesh->Indices[j]]);
+        vector4 Vertex = vector4(Mesh->Vertices[Mesh->Indices[j]], 1.0f);
+        vector4 ModelVertex       = MultPointMatrix(&Mesh->Transform, &Vertex);
         vector4 CameraSpaceVertex = MultPointMatrix(&GameState->Camera.View, &ModelVertex);
         vector4 ProjectedVertex   = MultVecMatrix(&GameState->Camera.Projection, &CameraSpaceVertex);
         
@@ -409,6 +410,8 @@ RasterizeMesh(game_state* GameState,
     }
 }
 
+global_variable mesh_handle CubeVertexBuffer;
+
 extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* Buffer)
 {
     Assert(sizeof(game_state) <= Memory->PermanentStorageSize);
@@ -428,7 +431,12 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
     Cube->VerticesCount = CubeVerticesCount;
     Cube->IndicesCount = CubeIndicesCount;
     
-    vector4* SphereVertices = (vector4*)((uint8_t*)Memory->PermanentStorage + sizeof(game_state));
+    if(Memory->Renderer.CreateVertexBuffer != nullptr && CubeVertexBuffer == INVALID_HANDLE)
+    {
+        CubeVertexBuffer = Memory->Renderer.CreateVertexBuffer(CubeVertices, CubeNormals, CubeVerticesCount);
+    }
+    
+    vector3* SphereVertices = (vector3*)((uint8_t*)Memory->PermanentStorage + sizeof(game_state));
     vector3* SphereNormals = (vector3*)(SphereVertices + sizeof(vector4) * SPHERE_VERTEX_COUNT);
     uint32_t* SphereIndices = (uint32_t*)(SphereNormals + sizeof(vector3) * SPHERE_VERTEX_COUNT);
     Assert((uintptr_t)(SphereIndices + SPHERE_INDEX_COUNT) <= (uintptr_t)Memory->PermanentStorage + Memory->PermanentStorageSize);

@@ -12,6 +12,13 @@
 #define FLOAT_MAX 3.402823466e+38F
 #define FLOAT_MIN 1.175494e-38F
 
+/*
+#ifdef UINT16_MAX
+#undef UINT16_MAX
+#endif
+#define UINT16_MAX 65535
+*/
+
 #if SABLUJO_SLOW
 // TODO: Complete assertion macro - don't worry everyone!
 #define Assert(Expression) if(!(Expression)) {*(int32_t *)0 = 0;}

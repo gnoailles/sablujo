@@ -59,6 +59,12 @@ struct vector4
         __m128 vec;
     };
     
+    vector4() : X{0.0f}, Y{0.0f}, Z{0.0f}, W{0.0f}
+    {}
+    vector4(float x,float y, float z, float w) : X{x}, Y{y}, Z{z}, W{w}
+    {}
+    vector4(vector3 xyz, float w) : X{xyz.X}, Y{xyz.Y}, Z{xyz.Z}, W{w}
+    {}
 };
 
 struct vector4i

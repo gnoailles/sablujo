@@ -21,6 +21,39 @@ struct platform_calls
 #endif
 };
 
+#ifdef INVALID_HANDLE
+#undef INVALID_HANDLE
+#endif
+
+/*
+#ifdef HANDLE
+#undef HANDLE
+#endif
+*/
+#if SABLUJO_INTERNAL
+struct mesh_handle
+{
+    uint16_t Handle = UINT16_MAX;
+};
+
+inline bool
+operator==(mesh_handle lhs, mesh_handle rhs)
+{
+    return lhs.Handle == rhs.Handle;
+}
+#define INVALID_HANDLE mesh_handle{UINT16_MAX}
+
+#else
+using mesh_handle = uint16_t;
+#endif
+
+typedef mesh_handle create_vertex_buffer(vector3* Vertices, vector3* Normals, uint32_t VerticesCount);
+
+struct renderer_calls
+{
+    create_vertex_buffer* CreateVertexBuffer;
+};
+
 struct game_memory
 {
     uint64_t PermanentStorageSize;
@@ -29,6 +62,7 @@ struct game_memory
     void* TransientStorage;
     
     platform_calls Platform;
+    renderer_calls Renderer;
 };
 
 struct game_offscreen_buffer
@@ -40,6 +74,7 @@ struct game_offscreen_buffer
 };
 
 typedef void game_update_and_render(game_memory* Memory, game_offscreen_buffer* Buffer);
+
 
 //////////////////
 // Game Specific
@@ -55,7 +90,7 @@ struct camera
 
 struct mesh
 {
-    vector4* Vertices;
+    vector3* Vertices;
     vector3* Normals;
     uint32_t* Indices;
     uint32_t VerticesCount;
