@@ -21,8 +21,6 @@ struct dx12_present_synchronization
     uint64_t FenceValues[FrameCount];
 };
 
-#define TRIANGLE_EXAMPLE 0
-#if TRIANGLE_EXAMPLE
 #include <directxmath.h>
 using namespace DirectX;
 struct Vertex
@@ -30,7 +28,6 @@ struct Vertex
     XMFLOAT3 position;
     XMFLOAT4 color;
 };
-#endif
 
 global_variable dx12_present_synchronization Synchronization;
 global_variable ComPtr<IDXGISwapChain4> SwapChain;
@@ -154,7 +151,6 @@ DX12CreateVertexBuffer(vector3* Positions,
     return {};
 }
 
-#if TRIANGLE_EXAMPLE
 void 
 DX12CreateVertexBuffer()
 {
@@ -211,9 +207,6 @@ DX12CreateVertexBuffer()
     VertexBufferView.StrideInBytes = sizeof(Vertex);
     VertexBufferView.SizeInBytes = VertexBufferSize;
 }
-#endif
-
-
 
 void
 DX12LoadAssets()
@@ -353,9 +346,7 @@ DX12LoadAssets()
     // to record yet. The main loop expects it to be closed, so close it now.
     ThrowIfFailed(CommandList->Close());
     
-#if TRIANGLE_EXAMPLE
     DX12CreateVertexBuffer();
-#endif
     
     // Create synchronization objects and wait until assets have been uploaded to the GPU.
     {
@@ -378,11 +369,9 @@ DX12LoadAssets()
     }
 }
 
-win32_offscreen_buffer
+void
 DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
 {
-    win32_offscreen_buffer Buffer = {};
-    
     uint32_t DXGIFactoryFlags = 0;
 #if SABLUJO_INTERNAL
     ComPtr<ID3D12Debug> DebugController;
@@ -450,7 +439,7 @@ DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
     
     CurrentFrame = SwapChain->GetCurrentBackBufferIndex();
     
-#if !TRIANGLE_EXAMPLE
+#if 0
     // Setup our software backbuffer
     D3D12_HEAP_PROPERTIES UploadHeapProperties = {};
     UploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -530,12 +519,10 @@ DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
     }
     
     DX12LoadAssets();
-    
-    return Buffer;
 }
 
 void
-DX12Render(win32_offscreen_buffer* Buffer)
+DX12Render()
 {
     // Command list allocators can only be reset when the associated 
     // command lists have finished execution on the GPU; apps should use 
@@ -561,7 +548,6 @@ DX12Render(win32_offscreen_buffer* Buffer)
     Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
     Barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     
-#if TRIANGLE_EXAMPLE
     CommandList->ResourceBarrier(1, &Barrier);
     
     uint32_t RTVDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -578,7 +564,7 @@ DX12Render(win32_offscreen_buffer* Buffer)
     CommandList->DrawInstanced(3, 1, 0, 0);
     
     Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-#else
+#if 0
     Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
     CommandList->ResourceBarrier(1, &Barrier);
     
@@ -611,7 +597,7 @@ DX12Render(win32_offscreen_buffer* Buffer)
     CommandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
     
     
-#if !TRIANGLE_EXAMPLE
+#if 0
     D3D12_RANGE ReadRange = {0, 0}; // We do not intend to read from this resource on the CPU.
     ThrowIfFailed(BackBuffer->Map(0, &ReadRange, &Buffer->Memory));
 #endif

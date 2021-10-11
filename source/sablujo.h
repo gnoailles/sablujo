@@ -65,6 +65,12 @@ struct game_memory
     renderer_calls Renderer;
 };
 
+struct viewport
+{
+    uint32_t Width;
+    uint32_t Height;
+};
+
 struct game_offscreen_buffer
 {
     void* Memory;
@@ -73,7 +79,7 @@ struct game_offscreen_buffer
     int32_t Pitch;
 };
 
-typedef void game_update_and_render(game_memory* Memory, game_offscreen_buffer* Buffer);
+typedef void game_update_and_render(game_memory* Memory, viewport* Viewport);
 
 
 //////////////////

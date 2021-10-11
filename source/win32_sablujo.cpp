@@ -65,62 +65,6 @@ Win32GetWindowDimension(HWND Window)
     return Result;
 }
 
-#if RENDERING_API == WIN32_RENDERER
-internal void 
-Win32ResizeDIBSection(win32_offscreen_buffer* Buffer, int32_t Width, int32_t Height)
-{
-    
-    if(Buffer->Memory)
-    {
-        VirtualFree(Buffer->Memory, 0, MEM_RELEASE);
-    }
-    
-    Buffer->Width = Width;
-    Buffer->Height = Height;
-    Buffer->BytesPerPixel = 4;
-    Buffer->Pitch =  Buffer->Width * Buffer->BytesPerPixel;
-    
-    // TODO(Gouzi): Maybe don't free first, free after and first if that fails.
-    Buffer->Info.bmiHeader.biSize = sizeof(Buffer->Info.bmiHeader);
-    Buffer->Info.bmiHeader.biWidth = Width;
-    Buffer->Info.bmiHeader.biHeight = -Height;
-    Buffer->Info.bmiHeader.biPlanes = 1;
-    Buffer->Info.bmiHeader.biBitCount = 32;
-    Buffer->Info.bmiHeader.biCompression = BI_RGB;
-    
-    int32_t BackBufferMemorySize = Buffer->BytesPerPixel * Width * Height;
-    Buffer->Memory = VirtualAlloc(0, BackBufferMemorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-}
-
-internal void
-Win32UpdateWindow(HDC DeviceContext, 
-                  win32_window_dimension Size, 
-                  win32_offscreen_buffer Buffer)
-{
-#if 0
-    int32_t PaddingX = (Size.Width - Buffer.Width) / 2;
-    int32_t PaddingY = (Size.Height - Buffer.Height) / 2;
-    PatBlt(DeviceContext, 0,                       0,                        PaddingX,              Size.Height, BLACKNESS);
-    PatBlt(DeviceContext, PaddingX + Buffer.Width, 0,                        PaddingX,              Size.Height, BLACKNESS);
-    PatBlt(DeviceContext, PaddingX,                0,                        Size.Width - PaddingX, PaddingY,    BLACKNESS);
-    PatBlt(DeviceContext, PaddingX,                PaddingY + Buffer.Height, Size.Width - PaddingX, PaddingY,    BLACKNESS);
-    StretchDIBits(DeviceContext,
-                  PaddingX, PaddingY, Buffer.Width, Buffer.Height,
-                  0, 0, Buffer.Width, Buffer.Height,
-                  Buffer.Memory,
-                  &Buffer.Info,
-                  DIB_RGB_COLORS, SRCCOPY);
-#else
-    StretchDIBits(DeviceContext,
-                  0, 0, Buffer.Width, Buffer.Height,
-                  0, 0, Buffer.Width, Buffer.Height,
-                  Buffer.Memory,
-                  &Buffer.Info,
-                  DIB_RGB_COLORS, SRCCOPY);
-#endif
-}
-#endif
-
 LRESULT CALLBACK 
 MainWindowCallback(HWND Window, 
                    UINT Message, 
@@ -252,13 +196,9 @@ WinMain(HINSTANCE Instance,
             
             // Init Renderer
             win32_window_dimension DefaultDimension = Win32GetWindowDimension(Window);
+            viewport Viewport = {(uint32_t)DefaultDimension.Width, (uint32_t)DefaultDimension.Height};
             Assert(DefaultDimension.Width == DefaultWidth && DefaultDimension.Height == DefaultHeight);
-#if RENDERING_API == WIN32_RENDERER
-            win32_offscreen_buffer BackBuffer;
-            Win32ResizeDIBSection(&BackBuffer, DefaultWidth, DefaultHeight);
-#elif RENDERING_API == DX12
-            win32_offscreen_buffer BackBuffer = DX12InitRenderer(Window, DefaultDimension);
-#endif
+            DX12InitRenderer(Window, DefaultDimension);
             
             // Init Memory
             game_memory GameMemory = {};
@@ -266,9 +206,7 @@ WinMain(HINSTANCE Instance,
             GameMemory.TransientStorageSize = Gigabytes((uint64_t)1);
             uint64_t TotalSize = GameMemory.TransientStorageSize + GameMemory.PermanentStorageSize;
             
-#if RENDERING_API == DX12
             GameMemory.Renderer.CreateVertexBuffer = &DX12CreateVertexBuffer;
-#endif
 #ifdef SABLUJO_INTERNAL
             LPVOID BaseAddress = (LPVOID)Terabytes((uint64_t)2);
             GameMemory.Platform.DEBUGFormatString = &sprintf_s;
@@ -311,26 +249,13 @@ WinMain(HINSTANCE Instance,
                     DispatchMessageA(&Message);
                 }
                 
-                game_offscreen_buffer GameBuffer = {};
-                GameBuffer.Memory = BackBuffer.Memory;
-                GameBuffer.Width = BackBuffer.Width;
-                GameBuffer.Height = BackBuffer.Height;
-                GameBuffer.Pitch = BackBuffer.Pitch;
                 if(Game.UpdateAndRender)
                 {
-                    Game.UpdateAndRender(&GameMemory, &GameBuffer);
+                    Game.UpdateAndRender(&GameMemory, &Viewport);
                 }
                 
-#if RENDERING_API == WIN32_RENDERER
-                HDC DeviceContext = GetDC(Window);
-                win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-                Win32UpdateWindow(DeviceContext, Dimension, BackBuffer);
-                ReleaseDC(Window, DeviceContext);
-#elif RENDERING_API == DX12
-                DX12Render(&BackBuffer);
+                DX12Render();
                 DX12Present();
-#endif
-                
                 
                 uint64_t EndCycleCount = __rdtsc();
                 LARGE_INTEGER EndCounter;
@@ -349,9 +274,7 @@ WinMain(HINSTANCE Instance,
                 LastCycleCount = EndCycleCount;
                 LastCounter = EndCounter;
             }
-#if RENDERING_API == DX12
             DX12ShutdownRenderer();
-#endif
         }
         else
         {
