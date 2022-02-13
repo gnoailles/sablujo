@@ -6,6 +6,8 @@
 #include <dxgi1_6.h>
 #include <wrl.h>
 #include <D3DCompiler.h>
+#include <vector>
+#include <queue>
 
 using Microsoft::WRL::ComPtr;
 
@@ -26,7 +28,7 @@ using namespace DirectX;
 struct Vertex
 {
     XMFLOAT3 position;
-    XMFLOAT4 color;
+    XMFLOAT3 normals;
 };
 
 global_variable dx12_present_synchronization Synchronization;
@@ -35,31 +37,67 @@ global_variable ComPtr<ID3D12CommandQueue> CommandQueue;
 global_variable ComPtr<ID3D12Device8> Device;
 global_variable ComPtr<ID3D12DescriptorHeap> RTVHeap;
 global_variable ComPtr<ID3D12Resource> RenderTargets[FrameCount];
-global_variable ComPtr<ID3D12CommandAllocator> CommandAllocators[FrameCount];
+global_variable ComPtr<ID3D12CommandAllocator> CommandAllocators[FrameCount][2];
 
 
 global_variable ComPtr<ID3D12RootSignature> RootSignature;
 global_variable ComPtr<ID3D12PipelineState> PipelineState;
 global_variable ComPtr<ID3D12GraphicsCommandList> CommandList;
+global_variable ComPtr<ID3D12GraphicsCommandList> LoadingCommandList;
+
+global_variable std::queue<mesh_handle> RenderList;
 
 global_variable D3D12_VIEWPORT Viewport;
 global_variable D3D12_RECT ScissorRect;
 
+global_variable XMMATRIX CurrentViewProjection;
 
-// App resources.
+struct vertex_buffer
+{
+    vertex_buffer() : MainBuffer{}, StagingBuffer{}, BufferView{} {};
+    
+    vertex_buffer(vertex_buffer&& Other) : 
+    MainBuffer{std::move(Other.MainBuffer)}
+    , StagingBuffer{std::move(Other.StagingBuffer)} 
+    , BufferView{std::move(Other.BufferView)}
+    , VertexCount{Other.VertexCount}
+    {};
+    
+    ComPtr<ID3D12Resource> MainBuffer;
+    ComPtr<ID3D12Resource> StagingBuffer;
+    D3D12_VERTEX_BUFFER_VIEW BufferView;
+    uint32_t VertexCount {0};
+};
 
+struct index_buffer
+{
+    index_buffer() : MainBuffer{}, StagingBuffer{}, BufferView{} {};
+    
+    index_buffer(index_buffer&& Other) : 
+    MainBuffer{std::move(Other.MainBuffer)}
+    , StagingBuffer{std::move(Other.StagingBuffer)} 
+    , BufferView{std::move(Other.BufferView)}
+    , IndexCount{Other.IndexCount}
+    {};
+    
+    ComPtr<ID3D12Resource> MainBuffer;
+    ComPtr<ID3D12Resource> StagingBuffer;
+    D3D12_INDEX_BUFFER_VIEW BufferView;
+    uint32_t IndexCount {0};
+};
 
-global_variable ComPtr<ID3D12Resource> VertexBuffer;
-global_variable D3D12_VERTEX_BUFFER_VIEW VertexBufferView;
-#if !TRIANGLE_EXAMPLE
-global_variable ComPtr<ID3D12Resource> BackBuffer;
-global_variable D3D12_SUBRESOURCE_FOOTPRINT BackBufferFootPrint;
-#endif
+global_variable std::vector<vertex_buffer> VertexBuffers;
+global_variable std::vector<index_buffer> IndexBuffers;
+
 inline void
-ThrowIfFailed(HRESULT hr)
+ThrowIfFailed(HRESULT hr, ID3DBlob* error = nullptr)
 {
     if (FAILED(hr))
     {
+        if(error)
+        {
+            OutputDebugStringA((LPCSTR)error->GetBufferPointer());
+        }
         Assert(false);
     }
 }
@@ -80,12 +118,15 @@ void DX12WaitForGpu()
 }
 
 mesh_handle
-DX12CreateVertexBuffer(vector3* Positions, 
-                       vector3* Normals, 
-                       uint32_t VerticesCount)
+DX12CreateVertexBuffer(float* Vertices, 
+                       uint32_t* Indices, 
+                       uint32_t VertexSize,
+                       uint32_t VerticesCount,
+                       uint32_t IndicesCount)
 {
-    const uint32_t VertexSize = sizeof(Positions[0]) + sizeof(Normals[0]);
+    mesh_handle Result{(uint16_t)((uint8_t)(VertexBuffers.size() << 8) | (uint8_t)IndexBuffers.size())};
     const uint32_t VertexBufferSize = VertexSize * VerticesCount;
+    const uint32_t IndexBufferSize = sizeof(uint32_t) * IndicesCount;
     
     // Note: using upload heaps to transfer static data like vert buffers is not 
     // recommended. Every time the GPU needs it, the upload heap will be marshalled 
@@ -97,7 +138,6 @@ DX12CreateVertexBuffer(vector3* Positions,
     //UploadHeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
     //UploadHeapProperties.CreationNodeMask = 1; Passing zero is equivalent to passing one, in order to simplify the usage of single-GPU adapters.
     //UploadHeapProperties.VisibleNodeMask = 1; Passing zero is equivalent to passing one, in order to simplify the usage of single-GPU adapters.
-    ComPtr<ID3D12Resource> StagingBuffer;
     
     D3D12_RESOURCE_DESC VertexBufferDesc = {};
     VertexBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -112,12 +152,24 @@ DX12CreateVertexBuffer(vector3* Positions,
     VertexBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     VertexBufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
     
+    D3D12_RESOURCE_DESC IndexBufferDesc = VertexBufferDesc;
+    IndexBufferDesc.Width = IndexBufferSize;
+    
+    vertex_buffer VertexBuffer;
+    index_buffer IndexBuffer;
     ThrowIfFailed(Device->CreateCommittedResource(&UploadHeapProperties,
                                                   D3D12_HEAP_FLAG_NONE,
                                                   &VertexBufferDesc,
                                                   D3D12_RESOURCE_STATE_GENERIC_READ,
                                                   nullptr,
-                                                  IID_PPV_ARGS(&StagingBuffer)));
+                                                  IID_PPV_ARGS(&VertexBuffer.StagingBuffer)));
+    
+    ThrowIfFailed(Device->CreateCommittedResource(&UploadHeapProperties,
+                                                  D3D12_HEAP_FLAG_NONE,
+                                                  &IndexBufferDesc,
+                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                  nullptr,
+                                                  IID_PPV_ARGS(&IndexBuffer.StagingBuffer)));
     
     D3D12_HEAP_PROPERTIES DefaultHeapProperties = {};
     DefaultHeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -125,101 +177,95 @@ DX12CreateVertexBuffer(vector3* Positions,
     ThrowIfFailed(Device->CreateCommittedResource(&DefaultHeapProperties,
                                                   D3D12_HEAP_FLAG_NONE,
                                                   &VertexBufferDesc,
-                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                  D3D12_RESOURCE_STATE_COPY_DEST,
                                                   nullptr,
-                                                  IID_PPV_ARGS(&VertexBuffer)));
+                                                  IID_PPV_ARGS(&VertexBuffer.MainBuffer)));
     
-    
-    // Copy the triangle data to the vertex buffer.
-    uint8_t* VertexDataBegin;
-    D3D12_RANGE ReadRange = {0, 0}; // We do not intend to read from this resource on the CPU.
-    ThrowIfFailed(StagingBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&VertexDataBegin)));
-    uint32_t PositionsSize = sizeof(Positions[0]) * VerticesCount;
-    memcpy(VertexDataBegin, Positions, PositionsSize);
-    memcpy(VertexDataBegin + PositionsSize, Normals, sizeof(Normals[0]) * VerticesCount);
-    StagingBuffer->Unmap(0, nullptr);
-    
-    CommandList->CopyBufferRegion(VertexBuffer.Get(), 0, 
-                                  StagingBuffer.Get(), 0, 
-                                  VertexBufferSize);
-    
-    // Initialize the vertex buffer view.
-    VertexBufferView.BufferLocation = VertexBuffer->GetGPUVirtualAddress();
-    VertexBufferView.StrideInBytes = VertexSize;
-    VertexBufferView.SizeInBytes = VertexBufferSize;
-    
-    return {};
-}
-
-void 
-DX12CreateVertexBuffer()
-{
-    // Define the geometry for a triangle.
-    Vertex TriangleVertices[] =
-    {
-        { {  0.0f,   0.25f * 1.7777777777f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { {  0.25f, -0.25f * 1.7777777777f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
-        { { -0.25f, -0.25f * 1.7777777777f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
-    };
-    
-    const UINT VertexBufferSize = sizeof(TriangleVertices);
-    
-    // Note: using upload heaps to transfer static data like vert buffers is not 
-    // recommended. Every time the GPU needs it, the upload heap will be marshalled 
-    // over. Please read up on Default Heap usage. An upload heap is used here for 
-    // code simplicity and because there are very few verts to actually transfer.
-    D3D12_HEAP_PROPERTIES UploadHeapProperties = {};
-    UploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
-    //UploadHeapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-    //UploadHeapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-    //UploadHeapProperties.CreationNodeMask = 1; Passing zero is equivalent to passing one, in order to simplify the usage of single-GPU adapters.
-    //UploadHeapProperties.VisibleNodeMask = 1; Passing zero is equivalent to passing one, in order to simplify the usage of single-GPU adapters.
-    
-    D3D12_RESOURCE_DESC VertexBufferDesc = {};
-    VertexBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    //VertexBufferDesc.Alignment = 0;
-    VertexBufferDesc.Width = VertexBufferSize;
-    VertexBufferDesc.Height = 1;
-    VertexBufferDesc.DepthOrArraySize = 1;
-    VertexBufferDesc.MipLevels = 1;
-    VertexBufferDesc.Format = DXGI_FORMAT_UNKNOWN;
-    VertexBufferDesc.SampleDesc.Count = 1;
-    //VertexBufferDesc.SampleDesc.Quality = 0;
-    VertexBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    VertexBufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-    
-    ThrowIfFailed(Device->CreateCommittedResource(&UploadHeapProperties,
+    ThrowIfFailed(Device->CreateCommittedResource(&DefaultHeapProperties,
                                                   D3D12_HEAP_FLAG_NONE,
-                                                  &VertexBufferDesc,
-                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                  &IndexBufferDesc,
+                                                  D3D12_RESOURCE_STATE_COPY_DEST,
                                                   nullptr,
-                                                  IID_PPV_ARGS(&VertexBuffer)));
+                                                  IID_PPV_ARGS(&IndexBuffer.MainBuffer)));
     
-    // Copy the triangle data to the vertex buffer.
+    /*
+    D3D12_SUBRESOURCE_DATA SubresourceData = {};
+    SubresourceData.pData = Vertices;
+    SubresourceData.RowPitch = VertexBufferSize;
+    SubresourceData.SlicePitch = SubresourceData.RowPitch;
+    
+    UpdateSubresources(LoadingCommandList.Get(), 
+                       VertexBuffer.MainBuffer.Get(),
+                       VertexBuffer.StagingBuffer.Get(),
+                       0, 0, 1,
+                       &SubresourceData);
+    */
+    
     uint8_t* VertexDataBegin;
     D3D12_RANGE ReadRange = {0, 0}; // We do not intend to read from this resource on the CPU.
-    ThrowIfFailed(VertexBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&VertexDataBegin)));
-    memcpy(VertexDataBegin, TriangleVertices, sizeof(TriangleVertices));
-    VertexBuffer->Unmap(0, nullptr);
+    ThrowIfFailed(VertexBuffer.StagingBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&VertexDataBegin)));
+    memcpy(VertexDataBegin, Vertices, VertexBufferSize);
+    VertexBuffer.StagingBuffer->Unmap(0, nullptr);
+    
+    LoadingCommandList->CopyBufferRegion(VertexBuffer.MainBuffer.Get(), 0, 
+                                         VertexBuffer.StagingBuffer.Get(), 0, 
+                                         VertexBufferSize);
+    
+    // Copy the data to the index buffer.
+    uint8_t* IndexDataBegin;
+    ThrowIfFailed(IndexBuffer.StagingBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&IndexDataBegin)));
+    memcpy(IndexDataBegin, Indices, IndexBufferSize);
+    IndexBuffer.StagingBuffer->Unmap(0, nullptr);
+    
+    LoadingCommandList->CopyBufferRegion(IndexBuffer.MainBuffer.Get(), 0, 
+                                         IndexBuffer.StagingBuffer.Get(), 0, 
+                                         IndexBufferSize);
     
     // Initialize the vertex buffer view.
-    VertexBufferView.BufferLocation = VertexBuffer->GetGPUVirtualAddress();
-    VertexBufferView.StrideInBytes = sizeof(Vertex);
-    VertexBufferView.SizeInBytes = VertexBufferSize;
+    VertexBuffer.BufferView.BufferLocation = VertexBuffer.MainBuffer->GetGPUVirtualAddress();
+    VertexBuffer.BufferView.StrideInBytes = VertexSize;
+    VertexBuffer.BufferView.SizeInBytes = VertexBufferSize;
+    VertexBuffer.VertexCount = VerticesCount;
+    
+    // Initialize the index buffer view.
+    IndexBuffer.BufferView.BufferLocation = IndexBuffer.MainBuffer->GetGPUVirtualAddress();
+    IndexBuffer.BufferView.Format = DXGI_FORMAT_R32_UINT;
+    IndexBuffer.BufferView.SizeInBytes = IndexBufferSize;
+    IndexBuffer.IndexCount = IndicesCount;
+    
+    VertexBuffers.emplace_back(std::move(VertexBuffer));
+    IndexBuffers.emplace_back(std::move(IndexBuffer));
+    return Result;
 }
 
 void
 DX12LoadAssets()
 {
+    // Create a root signature.
+    D3D12_FEATURE_DATA_ROOT_SIGNATURE FeatureData = {};
+    FeatureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    if (FAILED(Device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &FeatureData, sizeof(FeatureData))))
+    {
+        FeatureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
+    }
+    
+    D3D12_ROOT_PARAMETER1 RootParameters[1];
+    RootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    RootParameters[0].Constants.ShaderRegister = 0;
+    RootParameters[0].Constants.RegisterSpace = 0;
+    RootParameters[0].Constants.Num32BitValues = sizeof(XMMATRIX) * 2 / 4;
+    RootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    
     // Create an empty root signature.
-    D3D12_ROOT_SIGNATURE_DESC RootSignatureDesc = {};
-    RootSignatureDesc.NumParameters = 0;
-    RootSignatureDesc.pParameters = nullptr;
-    RootSignatureDesc.NumStaticSamplers = 0;
-    RootSignatureDesc.pStaticSamplers = nullptr;
-    RootSignatureDesc.Flags = 
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC VersionedRootSignatureDesc;
+    VersionedRootSignatureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    VersionedRootSignatureDesc.Desc_1_1.NumParameters = 1;
+    VersionedRootSignatureDesc.Desc_1_1.pParameters = RootParameters;
+    VersionedRootSignatureDesc.Desc_1_1.NumStaticSamplers = 0;
+    VersionedRootSignatureDesc.Desc_1_1.pStaticSamplers = nullptr;
+    VersionedRootSignatureDesc.Desc_1_1.Flags = 
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
-        D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
+        // D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
@@ -227,12 +273,13 @@ DX12LoadAssets()
         D3D12_ROOT_SIGNATURE_FLAG_DENY_AMPLIFICATION_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_MESH_SHADER_ROOT_ACCESS;
     
+    // A single 32-bit constant root parameter that is used by the vertex shader.
+    
     ComPtr<ID3DBlob> Signature;
     ComPtr<ID3DBlob> Error;
-    ThrowIfFailed(D3D12SerializeRootSignature(&RootSignatureDesc, 
-                                              D3D_ROOT_SIGNATURE_VERSION_1, 
-                                              &Signature, 
-                                              &Error));
+    ThrowIfFailed(D3D12SerializeVersionedRootSignature(&VersionedRootSignatureDesc, 
+                                                       &Signature, 
+                                                       &Error));
     ThrowIfFailed(Device->CreateRootSignature(0, 
                                               Signature->GetBufferPointer(), 
                                               Signature->GetBufferSize(), 
@@ -249,23 +296,24 @@ DX12LoadAssets()
     CompileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
     
-    ThrowIfFailed(D3DCompileFromFile(L"resources/shaders/base_color.hlsl", 
-                                     nullptr, nullptr, 
-                                     "VS", "vs_5_0", 
-                                     CompileFlags, 0, 
-                                     &VertexShader, &Error));
+    const auto CompileResult = D3DCompileFromFile(L"resources/shaders/base_color_mvp.hlsl", 
+                                                  nullptr, nullptr, 
+                                                  "VS", "vs_5_1", 
+                                                  CompileFlags, 0, 
+                                                  &VertexShader, &Error);
+    ThrowIfFailed(CompileResult, Error.Get());
     
-    ThrowIfFailed(D3DCompileFromFile(L"resources/shaders/base_color.hlsl", 
+    ThrowIfFailed(D3DCompileFromFile(L"resources/shaders/base_color_mvp.hlsl", 
                                      nullptr, nullptr, 
-                                     "FS", "ps_5_0", 
+                                     "FS", "ps_5_1", 
                                      CompileFlags, 0, 
-                                     &PixelShader, &Error));
+                                     &PixelShader, &Error), Error.Get());
     
     // Define the vertex input layout.
     D3D12_INPUT_ELEMENT_DESC InputElementDescs[] =
     {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT,    0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "NORMAL",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
     };
     
     
@@ -325,7 +373,7 @@ DX12LoadAssets()
     PSODesc.IBStripCutValue;
     PSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     PSODesc.NumRenderTargets = 1;
-    PSODesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    PSODesc.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
     // PSODesc.DSVFormat;
     PSODesc.SampleDesc.Count = 1;
     // PSODesc.NodeMask;
@@ -336,17 +384,24 @@ DX12LoadAssets()
     
     
     // Create the command list
+    // Main command list is created in a closed state
+    ThrowIfFailed(Device->CreateCommandList1(0, 
+                                             D3D12_COMMAND_LIST_TYPE_DIRECT, 
+                                             D3D12_COMMAND_LIST_FLAG_NONE,
+                                             IID_PPV_ARGS(&CommandList)));
+    // Loading command list is created in an opened state 
+    // since we expect loads to happen on first frames.
     ThrowIfFailed(Device->CreateCommandList(0, 
                                             D3D12_COMMAND_LIST_TYPE_DIRECT, 
-                                            CommandAllocators[CurrentFrame].Get(), 
-                                            PipelineState.Get(), 
-                                            IID_PPV_ARGS(&CommandList)));
+                                            CommandAllocators[CurrentFrame][0].Get(), 
+                                            PipelineState.Get(),
+                                            IID_PPV_ARGS(&LoadingCommandList)));
     
     // Command lists are created in the recording state, but there is nothing
     // to record yet. The main loop expects it to be closed, so close it now.
-    ThrowIfFailed(CommandList->Close());
+    //ThrowIfFailed(CommandList->Close());
     
-    DX12CreateVertexBuffer();
+    //DX12CreateVertexBuffer();
     
     // Create synchronization objects and wait until assets have been uploaded to the GPU.
     {
@@ -379,6 +434,10 @@ DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
     {
         DebugController->EnableDebugLayer();
         DXGIFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
+        
+        ComPtr<ID3D12Debug1> DebugController1;
+        DebugController->QueryInterface(IID_PPV_ARGS(&DebugController1));
+        DebugController1->SetEnableGPUBasedValidation(true);
     }
 #endif
     ComPtr<IDXGIFactory7> Factory;
@@ -515,24 +574,48 @@ DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
         Device->CreateRenderTargetView(RenderTargets[n].Get(), nullptr, RTVHandle);
         RTVHandle.ptr += RTVDescriptorSize;
         
-        ThrowIfFailed(Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&CommandAllocators[n])));
+        ThrowIfFailed(Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&CommandAllocators[n][0])));
+        ThrowIfFailed(Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&CommandAllocators[n][1])));
     }
     
+    VertexBuffers.reserve(255);
+    IndexBuffers.reserve(255);
     DX12LoadAssets();
+}
+
+void 
+DX12SetViewProjection(float* ViewProjection)
+{
+    CurrentViewProjection = XMMATRIX(ViewProjection);
+}
+
+void
+DX12SubmitForRender(mesh_handle Mesh)
+{
+    RenderList.push(Mesh);
 }
 
 void
 DX12Render()
 {
+    ThrowIfFailed(LoadingCommandList->Close());
+    
+    // Execute the loading command list.
+    ID3D12CommandList* ppLoadingCommandLists[] = { LoadingCommandList.Get() };
+    CommandQueue->ExecuteCommandLists(_countof(ppLoadingCommandLists), ppLoadingCommandLists);
+    ThrowIfFailed(LoadingCommandList->Reset(CommandAllocators[CurrentFrame][0].Get(), PipelineState.Get()));
+    
+    
+    
     // Command list allocators can only be reset when the associated 
     // command lists have finished execution on the GPU; apps should use 
     // fences to determine GPU execution progress.
-    ThrowIfFailed(CommandAllocators[CurrentFrame]->Reset());
+    ThrowIfFailed(CommandAllocators[CurrentFrame][1]->Reset());
     
     // However, when ExecuteCommandList() is called on a particular command 
     // list, that command list can then be reset at any time and must be before 
     // re-recording.
-    ThrowIfFailed(CommandList->Reset(CommandAllocators[CurrentFrame].Get(), PipelineState.Get()));
+    ThrowIfFailed(CommandList->Reset(CommandAllocators[CurrentFrame][1].Get(), PipelineState.Get()));
     
     // Set necessary state.
     CommandList->SetGraphicsRootSignature(RootSignature.Get());
@@ -559,32 +642,30 @@ DX12Render()
     // Record commands.
     float ClearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
     CommandList->ClearRenderTargetView(RTVHandle, ClearColor, 0, nullptr);
+    
+    // Set Camera
+    
+    XMMATRIX Model = XMMatrixIdentity();
+    //XMMATRIX Model = XMMatrixTranslation(0.0f, 0.0f, -10.0f);
+    CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &Model, 0);
+    CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &CurrentViewProjection, sizeof(XMMATRIX) / 4);
+    
     CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    CommandList->IASetVertexBuffers(0, 1, &VertexBufferView);
-    CommandList->DrawInstanced(3, 1, 0, 0);
+    
+    while(!RenderList.empty())
+    {
+        const mesh_handle MeshHandle = RenderList.front();
+        const uint8_t VertexBuffIndex = MeshHandle >> 8;
+        const uint8_t IndexBuffIndex = MeshHandle & 0xFF;
+        const vertex_buffer& VertexBuffer = VertexBuffers[VertexBuffIndex];
+        const index_buffer& IndexBuffer = IndexBuffers[IndexBuffIndex];
+        CommandList->IASetVertexBuffers(0, 1, &VertexBuffer.BufferView);
+        CommandList->IASetIndexBuffer(&IndexBuffer.BufferView);
+        CommandList->DrawIndexedInstanced(IndexBuffer.IndexCount, 1, 0, 0, 0);
+        RenderList.pop();
+    }
     
     Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-#if 0
-    Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-    CommandList->ResourceBarrier(1, &Barrier);
-    
-    BackBuffer->Unmap(0, nullptr);
-    
-    D3D12_TEXTURE_COPY_LOCATION DestLocation = {};
-    DestLocation.pResource = RenderTargets[CurrentFrame].Get();
-    DestLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    DestLocation.SubresourceIndex = 0;
-    
-    D3D12_TEXTURE_COPY_LOCATION SrcLocation = {};
-    SrcLocation.pResource = BackBuffer.Get();
-    SrcLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-    SrcLocation.PlacedFootprint.Offset = 0;
-    SrcLocation.PlacedFootprint.Footprint = BackBufferFootPrint;
-    
-    CommandList->CopyTextureRegion(&DestLocation, 0,0,0,
-                                   &SrcLocation, nullptr);
-    Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-#endif
     
     // Indicate that the back buffer will now be used to present.
     Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
@@ -595,12 +676,6 @@ DX12Render()
     // Execute the command list.
     ID3D12CommandList* ppCommandLists[] = { CommandList.Get() };
     CommandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
-    
-    
-#if 0
-    D3D12_RANGE ReadRange = {0, 0}; // We do not intend to read from this resource on the CPU.
-    ThrowIfFailed(BackBuffer->Map(0, &ReadRange, &Buffer->Memory));
-#endif
 }
 
 void

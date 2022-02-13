@@ -37,20 +37,23 @@ global_variable vector3 CubeNormals[CubeVerticesCount] =
 };
 
 */
-global_variable vector3 CubeVertices[CubeVerticesCount] = 
+
+global_variable float CubeVertices[CubeVerticesCount][7] = 
 {
-    
-    { -0.5f, -0.5f,  0.5f },
-	{  0.5f, -0.5f,  0.5f },
-	{  0.5f,  0.5f,  0.5f },
-	{ -0.5f,  0.5f,  0.5f },
+    // POSITION                  NORMAL
+    // Front
+    { -0.5f, -0.5f,  0.5f, 1.0f, -0.5f, -0.5f,  0.5f },
+	{  0.5f, -0.5f,  0.5f, 1.0f,  0.5f, -0.5f,  0.5f },
+	{  0.5f,  0.5f,  0.5f, 1.0f,  0.5f,  0.5f,  0.5f },
+	{ -0.5f,  0.5f,  0.5f, 1.0f, -0.5f,  0.5f,  0.5f },
     // Back
-	{ -0.5f, -0.5f, -0.5f },
-	{  0.5f, -0.5f, -0.5f },
-	{  0.5f,  0.5f, -0.5f },
-	{ -0.5f,  0.5f, -0.5f }
+	{ -0.5f, -0.5f, -0.5f, 1.0f, -0.5f, -0.5f, -0.5f },
+	{  0.5f, -0.5f, -0.5f, 1.0f,  0.5f, -0.5f, -0.5f },
+	{  0.5f,  0.5f, -0.5f, 1.0f,  0.5f,  0.5f, -0.5f },
+	{ -0.5f,  0.5f, -0.5f, 1.0f, -0.5f,  0.5f, -0.5f }
 };
 
+/*
 global_variable vector3 CubeNormals[CubeVerticesCount] = 
 {
     // Front
@@ -64,9 +67,11 @@ global_variable vector3 CubeNormals[CubeVerticesCount] =
     {  0.5f,  0.5f, -0.5f },
     { -0.5f,  0.5f, -0.5f }
 };
+*/
 
 const uint32_t CubeIndicesCount = 36;
 global_variable uint32_t CubeIndices[CubeIndicesCount] =
+/*
 {
     // Front
     0,1,2,
@@ -91,6 +96,32 @@ global_variable uint32_t CubeIndices[CubeIndicesCount] =
     // Right
     3,2,6,
     6,7,3
+};
+*/
+{
+    // Front
+    2,1,0,
+    0,3,2,
+    
+    // Top
+    6,5,1,
+    1,2,6,
+    
+    // Back
+    5,6,7,
+    7,4,5,
+    
+    // Bottom
+    3,0,4,
+    4,7,3,
+    
+    // Left
+    1,5,4,
+    4,0,1,
+    
+    // Right
+    6,2,3,
+    3,7,6
 };
 
 #define GEOMETRY_H

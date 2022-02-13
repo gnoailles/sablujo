@@ -1,20 +1,20 @@
 struct FSInput
 {
     float4 position : SV_POSITION;
-    float4 color : COLOR;
+    float3 normals : NORMAL;
 };
 
-FSInput VS(float4 position : POSITION, float4 color : COLOR)
+FSInput VS(float4 position : POSITION, float3 normals : NORMAL)
 {
     FSInput result;
 
     result.position = position;
-    result.color = color;
+    result.normals = normals;
 
     return result;
 }
 
 float4 FS(FSInput input) : SV_TARGET
 {
-    return input.color;
+    return float4(input.normals, 1.0);
 }

@@ -19,80 +19,6 @@
 
 using color = vector3;
 
-internal void 
-VertexStage(game_state* GameState, mesh* Mesh,
-            int32_t ScreenWidth, int32_t ScreenHeight, 
-            vector2i* OutputVertices, vector3* OutputPositions, vector3* OutputNormals)
-{
-    for (uint32_t j = 0; j < Mesh->IndicesCount; j++) 
-    {
-        Assert(Mesh->Indices[j] < Mesh->VerticesCount);
-        vector4 Vertex = vector4(Mesh->Vertices[Mesh->Indices[j]], 1.0f);
-        vector4 ModelVertex       = MultPointMatrix(&Mesh->Transform, &Vertex);
-        vector4 CameraSpaceVertex = MultPointMatrix(&GameState->Camera.View, &ModelVertex);
-        vector4 ProjectedVertex   = MultVecMatrix(&GameState->Camera.Projection, &CameraSpaceVertex);
-        
-        vector3 TransformedNormal = MultPointMatrix(&Mesh->InverseTransform, &Mesh->Normals[Mesh->Indices[j]]);
-        
-        // convert to raster space and mark the position of the vertex in the image with a simple dot
-        int32_t x = MIN(ScreenWidth - 1, (int32_t)((ProjectedVertex.X + 1) * 0.5f * ScreenWidth));
-        int32_t y = MIN(ScreenHeight - 1, (int32_t)((1 - (ProjectedVertex.Y + 1) * 0.5f) * ScreenHeight));
-        
-        OutputVertices[j]  = {x, y};
-        OutputPositions[j] = vector3{ModelVertex.X, ModelVertex.Y, ModelVertex.Z};
-        OutputNormals[j]   = TransformedNormal;
-#if SABLUJO_INTERNAL
-        ++GameState->RenderStats.VerticesCount;
-#endif
-    }
-}
-
-internal lane_v3 
-FragmentStage(lane_v3 Position, lane_v3 Normal)
-{
-    lane_v3 LightPos = InitLaneV3(-3.0f, -8.0f, 0.0f);
-    lane_v3 CamPos = {};                
-    
-    lane_v3 LightDir = LightPos - Position;
-    lane_v3 CamDir = CamPos - Position;
-    
-    LightDir = Normalize(LightDir);
-    CamDir = Normalize(CamDir);
-    
-    lane_v3 HalfAngles = CamDir + LightDir;
-    HalfAngles = Normalize(HalfAngles);
-    
-    lane_f32 NdotL = DotProduct(Normal, LightDir);
-    NdotL = Clamp(NdotL, LaneZeroF32, LaneOneF32);
-    
-    lane_f32 NdotH = DotProduct(Normal, HalfAngles);
-    NdotH = Clamp(NdotH, LaneZeroF32, LaneOneF32);
-    
-    lane_f32 SpecularHighlight = Pow(NdotH, 32u);
-    
-    lane_v3 DiffuseCol = InitLaneV3(1.0f, 0.0f, 0.0f);
-    lane_f32 LightIntensity = InitLaneF32(40.0f);
-    
-    lane_v3 Diffuse = DiffuseCol * NdotL * LightIntensity;
-    
-    lane_v3 SpecularColor = InitLaneV3(1.0f, 1.0f, 1.0f);
-    lane_f32 SpecularIntensity = InitLaneF32(8.0f);
-    
-    lane_v3 Specular = SpecularColor * SpecularHighlight * SpecularIntensity;
-    
-    lane_v3 AmbientCol = InitLaneV3(0.1f, 0.0f, 0.0f);
-    lane_v3 FinalColor = AmbientCol + Diffuse + Specular;
-    
-    FinalColor.X = LinearToSRGB(FinalColor.X);
-    FinalColor.Y = LinearToSRGB(FinalColor.Y);
-    FinalColor.Z = LinearToSRGB(FinalColor.Z);
-    
-    FinalColor.X = Min(FinalColor.X, LaneOneF32);
-    FinalColor.Y = Min(FinalColor.Y, LaneOneF32);
-    FinalColor.Z = Min(FinalColor.Z, LaneOneF32);
-    return FinalColor;
-}
-
 internal inline uint32_t 
 ColorToUInt32(color Color)
 {
@@ -133,8 +59,8 @@ InitializeCamera(camera* Camera, viewport* Viewport)
     Camera->View.val[2][2] = 1.0f; 
     Camera->View.val[3][3] = 1.0f;
     
-    Camera->View.val[3][1] = 0.0f;
-    Camera->View.val[3][2] = 0.0f;
+    Camera->View.val[3][1] = -1.0f;
+    Camera->View.val[3][2] = -2.0f;
     float AngleRad = -10.0f * PI_FLOAT / 180.0f;
     matrix4 XRotMatrix = GetXRotationMatrix(AngleRad);
     Camera->View = MultMatrixMatrix(&Camera->View, &XRotMatrix);
@@ -167,7 +93,7 @@ inline float linear_to_srgb(float x)
     return (x <= 0.0031308f) ? x * 12.92f : 1.055f * powf(x, 1.0f / 2.4f);
 }
 
-global_variable mesh_handle CubeVertexBuffer;
+global_variable mesh_handle CubeMesh;
 
 extern "C" void GameUpdateAndRender(game_memory* Memory, viewport* Viewport)
 {
@@ -177,70 +103,26 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, viewport* Viewport)
     GameState->RenderStats = {};
 #endif
     camera* Camera = &GameState->Camera;
-    GameState->Meshes[0] = {};
-    GameState->Meshes[1] = {};
-    mesh* Cube = &GameState->Meshes[0];
-    mesh* Sphere = &GameState->Meshes[1];
     
-    Cube->Vertices = CubeVertices;
-    Cube->Normals = CubeNormals;
-    Cube->Indices = CubeIndices;
-    Cube->VerticesCount = CubeVerticesCount;
-    Cube->IndicesCount = CubeIndicesCount;
-    
-    /*
-    if(Memory->Renderer.CreateVertexBuffer != nullptr && CubeVertexBuffer == INVALID_HANDLE)
+    if(CubeMesh == INVALID_HANDLE)
     {
-        CubeVertexBuffer = Memory->Renderer.CreateVertexBuffer(CubeVertices, CubeNormals, CubeVerticesCount);
+        Assert(Memory->Renderer.CreateVertexBuffer);
+        CubeMesh = Memory->Renderer.CreateVertexBuffer(&CubeVertices[0][0], CubeIndices, sizeof(float) * 7, CubeVerticesCount, CubeIndicesCount);
     }
-    */
-    vector3* SphereVertices = (vector3*)((uint8_t*)Memory->PermanentStorage + sizeof(game_state));
-    vector3* SphereNormals = (vector3*)(SphereVertices + sizeof(vector4) * SPHERE_VERTEX_COUNT);
-    uint32_t* SphereIndices = (uint32_t*)(SphereNormals + sizeof(vector3) * SPHERE_VERTEX_COUNT);
-    Assert((uintptr_t)(SphereIndices + SPHERE_INDEX_COUNT) <= (uintptr_t)Memory->PermanentStorage + Memory->PermanentStorageSize);
-    
-    Sphere->Vertices = SphereVertices;
-    Sphere->Normals = SphereNormals;
-    Sphere->Indices = SphereIndices;
-    Sphere->VerticesCount = SPHERE_VERTEX_COUNT;
-    Sphere->IndicesCount = SPHERE_INDEX_COUNT;
     
     if(!Camera->IsInitialized)
     {
         InitializeCamera(Camera, Viewport);
-        CreateSphere(SPHERE_SUBDIV, SPHERE_SUBDIV, 
-                     Sphere->Vertices, Sphere->Normals, Sphere->Indices, 
-                     SPHERE_VERTEX_COUNT, SPHERE_INDEX_COUNT);
     }
     
-    
-    float AngleRad = 0.0f + GameState->YRot * PI_FLOAT / 180.0f;
-    matrix4 YRotMatrix = GetYRotationMatrix(AngleRad);
-    AngleRad = 0.0f * PI_FLOAT / 180.0f;
-    matrix4 XRotMatrix = GetXRotationMatrix(AngleRad);
-    matrix4 Rotation = MultMatrixMatrix(&YRotMatrix,&XRotMatrix);;
-    GameState->YRot += .5f;
-    
-    matrix4 Translation = {};
-    Translation.val[0][0] = 1.0f;
-    Translation.val[1][1] = 1.0f;
-    Translation.val[2][2] = 1.0f;
-    Translation.val[3][3] = 1.0f;
-    
-    Translation.val[3][0] = -1.0f;
-    Translation.val[3][1] = 0.5f;
-    Translation.val[3][2] = 2.0f;
-    
-    Sphere->Transform = MultMatrixMatrix(&Rotation, &Translation);
-    Sphere->InverseTransform = InverseMatrix(&Sphere->Transform);
-    Sphere->InverseTransform = TransposeMatrix(&Sphere->InverseTransform);
-    
-    Translation.val[3][0] = 1.0f;
-    Translation.val[3][1] = 0.0f;
-    Translation.val[3][2] = 2.0f;
-    Cube->Transform = MultMatrixMatrix(&Rotation, &Translation);
-    Cube->InverseTransform = InverseMatrix(&Cube->Transform);
-    Cube->InverseTransform = TransposeMatrix(&Cube->InverseTransform);
+    Assert(Memory->Renderer.SetViewProjection);
+    matrix4 ViewProj = MultMatrixMatrix(&Camera->View, &Camera->Projection);
+    Memory->Renderer.SetViewProjection(&ViewProj.val[0][0]);
+    Assert(Memory->Renderer.SubmitForRender);
+    Memory->Renderer.SubmitForRender(CubeMesh);
+    Memory->Renderer.SubmitForRender(CubeMesh);
+    Memory->Renderer.SubmitForRender(CubeMesh);
+    Memory->Renderer.SubmitForRender(CubeMesh);
     
 #if SABLUJO_INTERNAL
     /*

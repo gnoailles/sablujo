@@ -34,6 +34,11 @@ struct platform_calls
 struct mesh_handle
 {
     uint16_t Handle = UINT16_MAX;
+    
+    operator uint16_t() const
+    {
+        return Handle;
+    }
 };
 
 inline bool
@@ -41,17 +46,32 @@ operator==(mesh_handle lhs, mesh_handle rhs)
 {
     return lhs.Handle == rhs.Handle;
 }
+
 #define INVALID_HANDLE mesh_handle{UINT16_MAX}
 
 #else
 using mesh_handle = uint16_t;
 #endif
 
-typedef mesh_handle create_vertex_buffer(vector3* Vertices, vector3* Normals, uint32_t VerticesCount);
 
+struct camera
+{
+    matrix4 View;
+    matrix4 Projection;
+    float AspectRatio;
+    bool IsInitialized;
+};
+
+
+typedef mesh_handle create_vertex_buffer(float* Vertices, uint32_t* Indices, 
+                                         uint32_t VertexSize, uint32_t VerticesCount, uint32_t IndicesCount);
+typedef void set_view_projection(float* ViewProjection);
+typedef void submit_for_render(mesh_handle Mesh);
 struct renderer_calls
 {
     create_vertex_buffer* CreateVertexBuffer;
+    set_view_projection* SetViewProjection;
+    submit_for_render* SubmitForRender;
 };
 
 struct game_memory
@@ -86,14 +106,6 @@ typedef void game_update_and_render(game_memory* Memory, viewport* Viewport);
 // Game Specific
 //////////////////
 
-struct camera
-{
-    matrix4 View;
-    matrix4 Projection;
-    float AspectRatio;
-    bool IsInitialized;
-};
-
 struct mesh
 {
     vector3* Vertices;
@@ -125,7 +137,6 @@ struct game_state
     render_stats RenderStats;
 #endif
     camera Camera;
-    mesh Meshes[2];
     float YRot;
 };
 
