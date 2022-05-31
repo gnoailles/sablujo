@@ -6,6 +6,7 @@
 
 // TODO(Gouzi): Temporary global
 global_variable bool IsRunning;
+global_variable renderer_config RendererConfig;
 //global_variable win32_offscreen_buffer BackBuffer;
 
 inline void
@@ -96,6 +97,35 @@ MainWindowCallback(HWND Window,
             // TODO(Gouzi): Handle as error - recreate window
             IsRunning = false;
         } break;
+        
+        /*
+        case WM_KEYDOWN:
+        if (pSample)
+        {
+            (static_cast<UINT8>(wParam));
+        }
+        return 0;
+        */
+        case WM_KEYUP:
+        {
+            switch(static_cast<UINT8>(WParam))
+            {
+                case VK_ESCAPE:
+                {
+                    PostQuitMessage(0);
+                } break;
+                
+                case VK_SPACE:
+                {
+                    RendererConfig.UseRaytracing = !RendererConfig.UseRaytracing;
+                } break;
+                
+                default:
+                break;
+                
+            }
+        }
+        return 0;
         
         default:
         {
@@ -198,7 +228,12 @@ WinMain(HINSTANCE Instance,
             win32_window_dimension DefaultDimension = Win32GetWindowDimension(Window);
             viewport Viewport = {(uint32_t)DefaultDimension.Width, (uint32_t)DefaultDimension.Height};
             Assert(DefaultDimension.Width == DefaultWidth && DefaultDimension.Height == DefaultHeight);
-            DX12InitRenderer(Window, DefaultDimension);
+            
+            RendererConfig = {};
+            RendererConfig.AllowTearing = true;
+            RendererConfig.UseRaytracing = true;
+            RendererConfig.OutputDimensions = DefaultDimension;
+            DX12InitRenderer(Window, &RendererConfig);
             
             // Init Memory
             game_memory GameMemory = {};
@@ -256,13 +291,14 @@ WinMain(HINSTANCE Instance,
                     Game.UpdateAndRender(&GameMemory, &Viewport);
                 }
                 
-                DX12Render();
-                DX12Present();
+                DX12Render(RendererConfig);
+                DX12Present(RendererConfig);
                 
                 uint64_t EndCycleCount = __rdtsc();
                 LARGE_INTEGER EndCounter;
                 QueryPerformanceCounter(&EndCounter);
                 
+#if PRINT_FRAME_STATS
                 uint64_t CyclesElapsed = EndCycleCount - LastCycleCount;
                 int64_t CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
                 float MSPerFrame = (float)((1000.0f*(double)CounterElapsed) / (double)PerfCountFrequency.QuadPart);
@@ -272,7 +308,7 @@ WinMain(HINSTANCE Instance,
                 char PerformanceReportBuffer [256];
                 sprintf_s(PerformanceReportBuffer, "%.02fms/f, %.02fFPS,  %.02fMc/f\n\n", MSPerFrame, FPS, MCPF);
                 OutputDebugStringA(PerformanceReportBuffer);
-                
+#endif
                 LastCycleCount = EndCycleCount;
                 LastCounter = EndCounter;
             }

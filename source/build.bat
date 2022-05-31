@@ -11,8 +11,10 @@ set GameSourceFiles=..\source\sablujo.cpp ..\source\sablujo_maths.cpp ..\source\
 set GameCompilerFlags=-LD -Fmsablujo.map %CommonCompilerFlags% %CommonCompilerDefines%
 set GameLinkerFlags=-PDB:sablujo_%random%.pdb -EXPORT:GameUpdateAndRender %CommonLinkerFlags%
 
-set PlatformSourceFiles=..\source\win32_sablujo.cpp ..\source\dx12_renderer.cpp
+set DXRHelperSourceFiles=..\source\nv_helpers_dx12\BottomLevelASGenerator.cpp ..\source\nv_helpers_dx12\RaytracingPipelineGenerator.cpp ..\source\nv_helpers_dx12\RootSignatureGenerator.cpp ..\source\nv_helpers_dx12\ShaderBindingTableGenerator.cpp ..\source\nv_helpers_dx12\TopLevelASGenerator.cpp
+set PlatformSourceFiles=..\source\win32_sablujo.cpp ..\source\dx12_renderer.cpp %DXRHelperSourceFiles%
 set PlatformCompilerFlags=-Fmwin32_sablujo.map %CommonCompilerFlags% %CommonCompilerDefines%
+set PlatformVendorLibraries=..\vendor\dxcompiler\lib\dxcompiler.lib ..\vendor\dxcompiler\lib\dxilconv.lib ..\vendor\dxcompiler\lib\DxbcConverter.lib ..\vendor\dxcompiler\lib\DxilConvPasses.lib ..\vendor\dxcompiler\lib\ShaderBinary.lib
 set PlatformLinkerFlags=user32.lib gdi32.lib d3d12.lib dxgi.lib D3DCompiler.lib %CommonLinkerFlags%
 
 

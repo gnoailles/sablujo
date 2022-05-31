@@ -102,19 +102,48 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, viewport* Viewport)
 #if SABLUJO_INTERNAL
     GameState->RenderStats = {};
 #endif
+    
     camera* Camera = &GameState->Camera;
-    
-    if(CubeMesh == INVALID_HANDLE)
-    {
-        Assert(Memory->Renderer.CreateVertexBuffer);
-        CubeMesh = Memory->Renderer.CreateVertexBuffer(&CubeVertices[0][0], CubeIndices, sizeof(float) * 7, CubeVerticesCount, CubeIndicesCount);
-    }
-    
     if(!Camera->IsInitialized)
     {
         InitializeCamera(Camera, Viewport);
     }
     
+    if(Memory->Renderer.CreateVertexBuffer != nullptr && CubeMesh == INVALID_HANDLE)
+    {
+        Assert(Memory->Renderer.CreateVertexBuffer);
+        CubeMesh = Memory->Renderer.CreateVertexBuffer(&CubeVertices[0][0], CubeIndices, sizeof(float) * 7, CubeVerticesCount, CubeIndicesCount);
+    }
+    
+#if 0
+    float AngleRad = 0.0f + GameState->YRot * PI_FLOAT / 180.0f;
+    matrix4 YRotMatrix = GetYRotationMatrix(AngleRad);
+    AngleRad = 0.0f * PI_FLOAT / 180.0f;
+    matrix4 XRotMatrix = GetXRotationMatrix(AngleRad);
+    matrix4 Rotation = MultMatrixMatrix(&YRotMatrix,&XRotMatrix);;
+    GameState->YRot += .5f;
+    
+    matrix4 Translation = {};
+    Translation.val[0][0] = 1.0f;
+    Translation.val[1][1] = 1.0f;
+    Translation.val[2][2] = 1.0f;
+    Translation.val[3][3] = 1.0f;
+    
+    Translation.val[3][0] = -1.0f;
+    Translation.val[3][1] = 0.5f;
+    Translation.val[3][2] = 2.0f;
+    
+    Sphere->Transform = MultMatrixMatrix(&Rotation, &Translation);
+    Sphere->InverseTransform = InverseMatrix(&Sphere->Transform);
+    Sphere->InverseTransform = TransposeMatrix(&Sphere->InverseTransform);
+    
+    Translation.val[3][0] = 1.0f;
+    Translation.val[3][1] = 0.0f;
+    Translation.val[3][2] = 2.0f;
+    Cube->Transform = MultMatrixMatrix(&Rotation, &Translation);
+    Cube->InverseTransform = InverseMatrix(&Cube->Transform);
+    Cube->InverseTransform = TransposeMatrix(&Cube->InverseTransform);
+#endif
     Assert(Memory->Renderer.SetViewProjection);
     matrix4 ViewProj = MultMatrixMatrix(&Camera->View, &Camera->Projection);
     Memory->Renderer.SetViewProjection(&ViewProj.val[0][0]);

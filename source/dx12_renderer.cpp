@@ -25,13 +25,61 @@ struct dx12_present_synchronization
 
 #include <directxmath.h>
 using namespace DirectX;
-struct Vertex
+struct vertex
 {
-    XMFLOAT3 position;
-    XMFLOAT3 normals;
+    XMFLOAT4 Position;
+    XMFLOAT3 Normal;
 };
 
-global_variable dx12_present_synchronization Synchronization;
+//DXR Helpers
+#include <vector>
+#include <dxcapi.h>
+#include "DXRHelper.h"
+#include "nv_helpers_dx12/TopLevelASGenerator.h"
+#include "nv_helpers_dx12/BottomLevelASGenerator.h"
+#include "nv_helpers_dx12/RaytracingPipelineGenerator.h"
+#include "nv_helpers_dx12/RootSignatureGenerator.h"
+#include "nv_helpers_dx12/ShaderBindingTableGenerator.h"
+
+// #DXR
+struct acceleration_structure_buffers
+{ 
+    ComPtr<ID3D12Resource> Scratch; // Scratch memory for AS builder 
+    ComPtr<ID3D12Resource> Result; // Where the AS is 
+    ComPtr<ID3D12Resource> InstanceDesc; // Hold the matrices of the instances
+};
+
+struct raytracing_data
+{
+    ComPtr<ID3D12Resource> BottomLevelAS; // Storage for the bottom Level AS
+    nv_helpers_dx12::TopLevelASGenerator TopLevelASGenerator;
+    acceleration_structure_buffers TopLevelASBuffers;
+    std::vector<std::pair<ComPtr<ID3D12Resource>, DirectX::XMMATRIX>> Instances;
+    
+    ComPtr<IDxcBlob> RayGenLibrary;
+    ComPtr<IDxcBlob> HitLibrary;
+    ComPtr<IDxcBlob> MissLibrary;
+    ComPtr<ID3D12RootSignature> RayGenSignature;
+    ComPtr<ID3D12RootSignature> HitSignature;
+    ComPtr<ID3D12RootSignature> MissSignature;
+    // Ray tracing pipeline state
+    ComPtr<ID3D12StateObject> StateObject;
+    // Ray tracing pipeline state properties, retaining the shader identifiers
+    // to use in the Shader Binding Table
+    ComPtr<ID3D12StateObjectProperties> StateObjectProps;
+    
+    
+    ComPtr<ID3D12Resource> OutputResource;
+    ComPtr<ID3D12DescriptorHeap> SrvUavHeap;
+    
+    // Shader Binding Table
+    nv_helpers_dx12::ShaderBindingTableGenerator SbtHelper;
+    ComPtr<ID3D12Resource> SbtStorage;
+};
+
+global_variable raytracing_data Raytracing;
+
+global_variable dx12_present_synchronization Synchronization[2];
 global_variable ComPtr<IDXGISwapChain4> SwapChain;
 global_variable ComPtr<ID3D12CommandQueue> CommandQueue;
 global_variable ComPtr<ID3D12Device8> Device;
@@ -42,7 +90,7 @@ global_variable ComPtr<ID3D12CommandAllocator> CommandAllocators[FrameCount][2];
 
 global_variable ComPtr<ID3D12RootSignature> RootSignature;
 global_variable ComPtr<ID3D12PipelineState> PipelineState;
-global_variable ComPtr<ID3D12GraphicsCommandList> CommandList;
+global_variable ComPtr<ID3D12GraphicsCommandList4> CommandList;
 global_variable ComPtr<ID3D12GraphicsCommandList> LoadingCommandList;
 
 global_variable std::queue<mesh_handle> RenderList;
@@ -89,8 +137,11 @@ struct index_buffer
 global_variable std::vector<vertex_buffer> VertexBuffers;
 global_variable std::vector<index_buffer> IndexBuffers;
 
+
+global_variable renderer_config SupportConfig;
+
 inline void
-ThrowIfFailed(HRESULT hr, ID3DBlob* error = nullptr)
+ThrowIfFailed(HRESULT hr, ID3DBlob* error)
 {
     if (FAILED(hr))
     {
@@ -102,19 +153,20 @@ ThrowIfFailed(HRESULT hr, ID3DBlob* error = nullptr)
     }
 }
 
+
 // Wait for pending GPU work to complete.
-void DX12WaitForGpu()
+void DX12WaitForCommandList(uint32_t CommandListIndex)
 {
     // Schedule a Signal command in the queue.
-    ThrowIfFailed(CommandQueue->Signal(Synchronization.Fence.Get(), Synchronization.FenceValues[CurrentFrame]));
+    ThrowIfFailed(CommandQueue->Signal(Synchronization[CommandListIndex].Fence.Get(), Synchronization[CommandListIndex].FenceValues[CurrentFrame]));
     
     // Wait until the fence has been processed.
-    ThrowIfFailed(Synchronization.Fence->SetEventOnCompletion(Synchronization.FenceValues[CurrentFrame], 
-                                                              Synchronization.FenceEvent));
-    WaitForSingleObjectEx(Synchronization.FenceEvent, INFINITE, FALSE);
+    ThrowIfFailed(Synchronization[CommandListIndex].Fence->SetEventOnCompletion(Synchronization[CommandListIndex].FenceValues[CurrentFrame], 
+                                                                                Synchronization[CommandListIndex].FenceEvent));
+    WaitForSingleObjectEx(Synchronization[CommandListIndex].FenceEvent, INFINITE, FALSE);
     
     // Increment the fence value for the current frame.
-    Synchronization.FenceValues[CurrentFrame]++;
+    Synchronization[CommandListIndex].FenceValues[CurrentFrame]++;
 }
 
 mesh_handle
@@ -236,6 +288,157 @@ DX12CreateVertexBuffer(float* Vertices,
     VertexBuffers.emplace_back(std::move(VertexBuffer));
     IndexBuffers.emplace_back(std::move(IndexBuffer));
     return Result;
+}
+
+//-----------------------------------------------------------------------------
+//
+// Create a bottom-level acceleration structure based on a list of vertex
+// buffers in GPU memory along with their vertex count. The build is then done
+// in 3 steps: gathering the geometry, computing the sizes of the required
+// buffers, and building the actual AS
+//
+
+acceleration_structure_buffers 
+CreateBottomLevelAS()
+{ 
+    nv_helpers_dx12::BottomLevelASGenerator BottomLevelAS; 
+    // Adding all vertex buffers and not transforming their position. 
+    for (uint32_t BuffIndex = 0; BuffIndex < VertexBuffers.size(); ++BuffIndex) 
+    { 
+        BottomLevelAS.AddVertexBuffer(VertexBuffers[BuffIndex].MainBuffer.Get(), 0, VertexBuffers[BuffIndex].VertexCount, sizeof(vertex), 
+                                      IndexBuffers[BuffIndex].MainBuffer.Get(), 0, IndexBuffers[BuffIndex].IndexCount,
+                                      0, 0); 
+    } 
+    // The AS build requires some scratch space to store temporary information. 
+    // The amount of scratch memory is dependent on the scene complexity. 
+    uint64_t ScratchSizeInBytes = 0; 
+    // The final AS also needs to be stored in addition to the existing vertex 
+    // buffers. It size is also dependent on the scene complexity. 
+    uint64_t ResultSizeInBytes = 0; 
+    BottomLevelAS.ComputeASBufferSizes(Device.Get(), false, &ScratchSizeInBytes, &ResultSizeInBytes); 
+    // Once the sizes are obtained, the application is responsible for allocating 
+    // the necessary buffers. Since the entire generation will be done on the GPU, 
+    // we can directly allocate those on the default heap 
+    acceleration_structure_buffers Buffers; 
+    Buffers.Scratch = nv_helpers_dx12::CreateBuffer(Device.Get(), 
+                                                    ScratchSizeInBytes, 
+                                                    D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
+                                                    D3D12_RESOURCE_STATE_COMMON, 
+                                                    nv_helpers_dx12::kDefaultHeapProps); 
+    Buffers.Result = nv_helpers_dx12::CreateBuffer(Device.Get(), 
+                                                   ResultSizeInBytes, 
+                                                   D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
+                                                   D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, 
+                                                   nv_helpers_dx12::kDefaultHeapProps); 
+    // Build the acceleration structure. Note that this call integrates a barrier 
+    // on the generated AS, so that it can be used to compute a top-level AS right 
+    // after this method. 
+    BottomLevelAS.Generate(CommandList.Get(), 
+                           Buffers.Scratch.Get(), 
+                           Buffers.Result.Get(), 
+                           false, 
+                           nullptr); 
+    return Buffers;
+}
+
+//-----------------------------------------------------------------------------
+// Create the main acceleration structure that holds all instances of the scene.
+// Similarly to the bottom-level AS generation, it is done in 3 steps: gathering
+// the instances, computing the memory requirements for the AS, and building the
+// AS itself
+//
+
+// pair of bottom level AS and matrix of the instance
+void CreateTopLevelAS(const std::vector<std::pair<ComPtr<ID3D12Resource>, DirectX::XMMATRIX>> &Instances)
+{ 
+    // Gather all the instances into the builder helper 
+    for(size_t i = 0; i < Instances.size(); i++)
+    { 
+        Raytracing.TopLevelASGenerator.AddInstance(Instances[i].first.Get(), 
+                                                   Instances[i].second, 
+                                                   static_cast<uint32_t>(i), 
+                                                   static_cast<uint32_t>(0));
+    } 
+    
+    // As for the bottom-level AS, the building the AS requires some scratch space 
+    // to store temporary data in addition to the actual AS. In the case of the 
+    // top-level AS, the instance descriptors also need to be stored in GPU 
+    // memory. This call outputs the memory requirements for each (scratch, 
+    // results, instance descriptors) so that the application can allocate the 
+    // corresponding memory 
+    uint64_t ScratchSize; 
+    uint64_t ResultSize;
+    uint64_t InstanceDescsSize;
+    Raytracing.TopLevelASGenerator.ComputeASBufferSizes(Device.Get(), 
+                                                        true, 
+                                                        &ScratchSize, 
+                                                        &ResultSize, 
+                                                        &InstanceDescsSize); 
+    
+    // Create the scratch and result buffers. Since the build is all done on GPU, 
+    // those can be allocated on the default heap 
+    Raytracing.TopLevelASBuffers.Scratch = nv_helpers_dx12::CreateBuffer(Device.Get(), 
+                                                                         ScratchSize, 
+                                                                         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
+                                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 
+                                                                         nv_helpers_dx12::kDefaultHeapProps); 
+    Raytracing.TopLevelASBuffers.Result = nv_helpers_dx12::CreateBuffer(Device.Get(), 
+                                                                        ResultSize, 
+                                                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
+                                                                        D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, 
+                                                                        nv_helpers_dx12::kDefaultHeapProps); 
+    
+    // The buffer describing the instances: ID, shader binding information, 
+    // matrices ... Those will be copied into the buffer by the helper through 
+    // mapping, so the buffer has to be allocated on the upload heap. 
+    Raytracing.TopLevelASBuffers.InstanceDesc = nv_helpers_dx12::CreateBuffer(Device.Get(), 
+                                                                              InstanceDescsSize, 
+                                                                              D3D12_RESOURCE_FLAG_NONE, 
+                                                                              D3D12_RESOURCE_STATE_GENERIC_READ, 
+                                                                              nv_helpers_dx12::kUploadHeapProps);
+    
+    // After all the buffers are allocated, or if only an update is required, we 
+    // can build the acceleration structure. Note that in the case of the update 
+    // we also pass the existing AS as the 'previous' AS, so that it can be 
+    // refitted in place. 
+    Raytracing.TopLevelASGenerator.Generate(CommandList.Get(), 
+                                            Raytracing.TopLevelASBuffers.Scratch.Get(), 
+                                            Raytracing.TopLevelASBuffers.Result.Get(), 
+                                            Raytracing.TopLevelASBuffers.InstanceDesc.Get());
+}
+
+//-----------------------------------------------------------------------------
+//
+// Combine the BLAS and TLAS builds to construct the entire acceleration
+// structure required to raytrace the scene
+//
+void CreateAccelerationStructures() 
+{ 
+    // Build the bottom AS from the Triangle vertex buffer 
+    acceleration_structure_buffers BottomLevelBuffers = CreateBottomLevelAS(); 
+    
+    // Just one instance for now 
+    
+    Raytracing.Instances = {{BottomLevelBuffers.Result, XMMatrixIdentity()}}; 
+    CreateTopLevelAS(Raytracing.Instances); 
+    
+    
+    const uint32_t GraphicsCommandList = 1;
+    // Flush the command list and wait for it to finish 
+    CommandList->Close(); 
+    ID3D12CommandList *ppCommandLists[] = {CommandList.Get()}; 
+    CommandQueue->ExecuteCommandLists(1, ppCommandLists); 
+    Synchronization[GraphicsCommandList].FenceValues[CurrentFrame]++; 
+    CommandQueue->Signal(Synchronization[GraphicsCommandList].Fence.Get(), Synchronization[GraphicsCommandList].FenceValues[CurrentFrame]); 
+    Synchronization[GraphicsCommandList].Fence->SetEventOnCompletion(Synchronization[GraphicsCommandList].FenceValues[CurrentFrame], Synchronization[GraphicsCommandList].FenceEvent); 
+    WaitForSingleObject(Synchronization[GraphicsCommandList].FenceEvent, INFINITE); 
+    
+    // Once the command list is finished executing, reset it to be reused for 
+    // rendering 
+    ThrowIfFailed(CommandList->Reset(CommandAllocators[CurrentFrame][GraphicsCommandList].Get(), PipelineState.Get())); 
+    // Store the AS buffers. The rest of the buffers will be released once we exit 
+    // the function 
+    Raytracing.BottomLevelAS = BottomLevelBuffers.Result;
 }
 
 void
@@ -404,15 +607,17 @@ DX12LoadAssets()
     //DX12CreateVertexBuffer();
     
     // Create synchronization objects and wait until assets have been uploaded to the GPU.
+    
+    for(uint32_t CommandListIndex = 0; CommandListIndex < 2; ++ CommandListIndex)
     {
-        ThrowIfFailed(Device->CreateFence(Synchronization.FenceValues[CurrentFrame], 
+        ThrowIfFailed(Device->CreateFence(Synchronization[CommandListIndex].FenceValues[CurrentFrame], 
                                           D3D12_FENCE_FLAG_NONE, 
-                                          IID_PPV_ARGS(&Synchronization.Fence)));
-        Synchronization.FenceValues[CurrentFrame]++;
+                                          IID_PPV_ARGS(&Synchronization[CommandListIndex].Fence)));
+        Synchronization[CommandListIndex].FenceValues[CurrentFrame]++;
         
         // Create an event handle to use for frame synchronization.
-        Synchronization.FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        if (Synchronization.FenceEvent == nullptr)
+        Synchronization[CommandListIndex].FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        if (Synchronization[CommandListIndex].FenceEvent == nullptr)
         {
             ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()));
         }
@@ -420,13 +625,251 @@ DX12LoadAssets()
         // Wait for the command list to execute; we are reusing the same command 
         // list in our main loop but for now, we just want to wait for setup to 
         // complete before continuing.
-        DX12WaitForGpu();
+        DX12WaitForCommandList(CommandListIndex);
     }
 }
 
+
+//-----------------------------------------------------------------------------
+// The ray generation shader needs to access 2 resources: the raytracing output
+// and the top-level acceleration structure
+//
+ComPtr<ID3D12RootSignature> CreateRayGenSignature()
+{ 
+    nv_helpers_dx12::RootSignatureGenerator RootSignatureGen; 
+    RootSignatureGen.AddHeapRangesParameter({
+                                                {
+                                                    0 /*u0*/, 
+                                                    1 /*1 descriptor */, 
+                                                    0 /*use the implicit register space 0*/, 
+                                                    D3D12_DESCRIPTOR_RANGE_TYPE_UAV /* UAV representing the output buffer*/, 
+                                                    0 /*heap slot where the UAV is defined*/
+                                                }, 
+                                                {
+                                                    0 /*t0*/, 
+                                                    1, 
+                                                    0, 
+                                                    D3D12_DESCRIPTOR_RANGE_TYPE_SRV /*Top-level acceleration structure*/, 
+                                                    1
+                                                }
+                                            });
+    return RootSignatureGen.Generate(Device.Get(), true);
+}
+
+//-----------------------------------------------------------------------------
+// The hit shader communicates only through the ray payload, and therefore does
+// not require any resources
+//
+ComPtr<ID3D12RootSignature> CreateMissSignature()
+{ 
+    nv_helpers_dx12::RootSignatureGenerator RootSignatureGen; 
+    return RootSignatureGen.Generate(Device.Get(), true);
+}
+
+//-----------------------------------------------------------------------------
+// The miss shader communicates only through the ray payload, and therefore
+// does not require any resources
+//
+ComPtr<ID3D12RootSignature> CreateHitSignature()
+{ 
+    nv_helpers_dx12::RootSignatureGenerator RootSignatureGen; 
+    RootSignatureGen.AddRootParameter(D3D12_ROOT_PARAMETER_TYPE_SRV);
+    return RootSignatureGen.Generate(Device.Get(), true);
+}
+
+//-----------------------------------------------------------------------------
+//
+// The raytracing pipeline binds the shader code, root signatures and pipeline
+// characteristics in a single structure used by DXR to invoke the shaders and
+// manage temporary memory during raytracing
+//
+//
+void CreateRaytracingPipeline()
+{ 
+    nv_helpers_dx12::RayTracingPipelineGenerator Pipeline(Device.Get()); 
+    // The pipeline contains the DXIL code of all the shaders potentially executed 
+    // during the raytracing process. This section compiles the HLSL code into a 
+    // set of DXIL libraries. We chose to separate the code in several libraries 
+    // by semantic (ray generation, hit, miss) for clarity. Any code layout can be 
+    // used. 
+    Raytracing.RayGenLibrary = nv_helpers_dx12::CompileShaderLibrary(L"resources/shaders/raytracing/RayGen.hlsl"); 
+    Raytracing.MissLibrary = nv_helpers_dx12::CompileShaderLibrary(L"resources/shaders/raytracing/Miss.hlsl"); 
+    Raytracing.HitLibrary = nv_helpers_dx12::CompileShaderLibrary(L"resources/shaders/raytracing/Hit.hlsl");
+    
+    
+    Pipeline.AddLibrary(Raytracing.RayGenLibrary.Get(), {L"RayGen"});
+    Pipeline.AddLibrary(Raytracing.MissLibrary.Get(), {L"Miss"});
+    Pipeline.AddLibrary(Raytracing.HitLibrary.Get(), {L"ClosestHit"});
+    
+    Pipeline.AddHitGroup(L"HitGroup", L"ClosestHit");
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // As described at the beginning of this section, to each shader corresponds a root signature defining
+    // its external inputs.
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+    // To be used, each DX12 shader needs a root signature defining which 
+    // parameters and buffers will be accessed. 
+    Raytracing.RayGenSignature = CreateRayGenSignature(); 
+    Raytracing.MissSignature = CreateMissSignature(); 
+    Raytracing.HitSignature = CreateHitSignature();
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+    // To be used, each shader needs to be associated to its root signature. A shaders imported from the DXIL libraries needs to be associated with exactly one root signature. The shaders comprising the hit groups need to share the same root signature, which is associated to the hit group (and not to the shaders themselves). Note that a shader does not have to actually access all the resources declared in its root signature, as long as the root signature defines a superset of the resources the shader needs.
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+    // The following section associates the root signature to each shader. Note 
+    // that we can explicitly show that some shaders share the same root signature 
+    // (eg. Miss and ShadowMiss). Note that the hit shaders are now only referred 
+    // to as hit groups, meaning that the underlying intersection, any-hit and 
+    // closest-hit shaders share the same root signature. 
+    Pipeline.AddRootSignatureAssociation(Raytracing.RayGenSignature.Get(), {L"RayGen"}); 
+    Pipeline.AddRootSignatureAssociation(Raytracing.MissSignature.Get(), {L"Miss"}); 
+    Pipeline.AddRootSignatureAssociation(Raytracing.HitSignature.Get(), {L"HitGroup"});
+    
+    Pipeline.SetMaxPayloadSize(4 * sizeof(float)); // RGB + distance
+    
+    Pipeline.SetMaxAttributeSize(2 * sizeof(float)); // barycentric coordinates
+    
+    Pipeline.SetMaxRecursionDepth(1);
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // The pipeline now has all the information it needs. We generate the pipeline by calling the `Generate`
+    // method of the helper, which creates the array of subobjects and calls
+    // `ID3D12Device5::CreateStateObject`.
+    Raytracing.StateObject = Pipeline.Generate();
+    Raytracing.StateObject->QueryInterface(IID_PPV_ARGS(&Raytracing.StateObjectProps)); 
+}
+
+//-----------------------------------------------------------------------------
+//
+// Allocate the buffer holding the raytracing output, with the same size as the
+// output image
+//
+void CreateRaytracingOutputBuffer(win32_window_dimension Dimension)
+{ 
+    D3D12_RESOURCE_DESC ResDesc = {}; 
+    ResDesc.DepthOrArraySize = 1; 
+    ResDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; 
+    // The backbuffer is actually DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, but sRGB 
+    // formats cannot be used with UAVs. For accuracy we should convert to sRGB 
+    // ourselves in the shader 
+    ResDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; 
+    ResDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS; 
+    ResDesc.Width = Dimension.Width; 
+    ResDesc.Height = Dimension.Height; 
+    ResDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN; 
+    ResDesc.MipLevels = 1; 
+    ResDesc.SampleDesc.Count = 1; 
+    ThrowIfFailed(Device->CreateCommittedResource(&nv_helpers_dx12::kDefaultHeapProps,
+                                                  D3D12_HEAP_FLAG_NONE,
+                                                  &ResDesc,
+                                                  D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                                  nullptr,
+                                                  IID_PPV_ARGS(&Raytracing.OutputResource)));
+}
+
+//-----------------------------------------------------------------------------
+//
+// Create the main heap used by the shaders, which will give access to the
+// raytracing output and the top-level acceleration structure
+//
+void CreateShaderResourceHeap()
+{ 
+    // Create a SRV/UAV/CBV descriptor heap. We need 2 entries - 1 UAV for the 
+    // raytracing output and 1 SRV for the TLAS 
+    Raytracing.SrvUavHeap = nv_helpers_dx12::CreateDescriptorHeap(Device.Get(), 
+                                                                  2, 
+                                                                  D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 
+                                                                  true); 
+    
+    // Get a handle to the heap memory on the CPU side, to be able to write the 
+    // descriptors directly 
+    D3D12_CPU_DESCRIPTOR_HANDLE SrvHandle = Raytracing.SrvUavHeap->GetCPUDescriptorHandleForHeapStart(); 
+    
+    // Create the UAV. Based on the root signature we created it is the first 
+    // entry. The Create*View methods write the view information directly into 
+    // srvHandle 
+    D3D12_UNORDERED_ACCESS_VIEW_DESC UavDesc = {}; 
+    UavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D; 
+    Device->CreateUnorderedAccessView(Raytracing.OutputResource.Get(), 
+                                      nullptr, 
+                                      &UavDesc, 
+                                      SrvHandle); 
+    
+    // Add the Top Level AS SRV right after the raytracing output buffer 
+    SrvHandle.ptr += Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); 
+    D3D12_SHADER_RESOURCE_VIEW_DESC SrvDesc; 
+    SrvDesc.Format = DXGI_FORMAT_UNKNOWN; 
+    SrvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE; 
+    SrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; 
+    SrvDesc.RaytracingAccelerationStructure.Location = Raytracing.TopLevelASBuffers.Result->GetGPUVirtualAddress(); 
+    
+    // Write the acceleration structure view in the heap 
+    Device->CreateShaderResourceView(nullptr, &SrvDesc, SrvHandle);
+}
+
+//-----------------------------------------------------------------------------
+//
+// The Shader Binding Table (SBT) is the cornerstone of the raytracing setup:
+// this is where the shader resources are bound to the shaders, in a way that
+// can be interpreted by the raytracer on GPU. In terms of layout, the SBT
+// contains a series of shader IDs with their resource pointers. The SBT
+// contains the ray generation shader, the miss shaders, then the hit groups.
+// Using the helper class, those can be specified in arbitrary order.
+//
+void CreateShaderBindingTable() 
+{ 
+    // The SBT helper class collects calls to Add*Program. If called several 
+    // times, the helper must be emptied before re-adding shaders. 
+    Raytracing.SbtHelper.Reset(); 
+    // The pointer to the beginning of the heap is the only parameter required by 
+    // shaders without root parameters 
+    D3D12_GPU_DESCRIPTOR_HANDLE SrvUavHeapHandle = Raytracing.SrvUavHeap->GetGPUDescriptorHandleForHeapStart();
+    uint64_t* HeapPointer = reinterpret_cast<uint64_t*>(SrvUavHeapHandle.ptr);
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // We can now add the various programs used in our example: according to its root signature, the ray generation shader needs to access
+    // the raytracing output buffer and the top-level acceleration structure referenced in the heap. Therefore, it
+    // takes a single resource pointer towards the beginning of the heap data. The miss shader and the hit group
+    // only communicate through the ray payload, and do not require any resource, hence an empty resource array.
+    // Note that the helper will group the shaders by types in the SBT, so it is possible to declare them in an
+    // arbitrary order. For example, miss programs can be added before or after ray generation programs without
+    // affecting the result.
+    // However, within a given type (say, the hit groups), the order in which they are added
+    // is important. It needs to correspond to the `InstanceContributionToHitGroupIndex` value used when adding
+    // instances to the top-level acceleration structure: for example, an instance having `InstanceContributionToHitGroupIndex==0`
+    // needs to have its hit group added first in the SBT.
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+    
+    // The ray generation only uses heap data 
+    Raytracing.SbtHelper.AddRayGenerationProgram(L"RayGen", {HeapPointer}); 
+    
+    // The miss and hit shaders do not access any external resources: instead they 
+    // communicate their results through the ray payload 
+    Raytracing.SbtHelper.AddMissProgram(L"Miss", {}); 
+    
+    // Adding the triangle hit shader 
+    std::vector<void*> BuffersVirtualAddresses;
+    BuffersVirtualAddresses.reserve(VertexBuffers.size());
+    for(uint32_t i = 0; i < VertexBuffers.size(); ++i)
+    {
+        BuffersVirtualAddresses.push_back((void*)(VertexBuffers[i].MainBuffer->GetGPUVirtualAddress()));
+    }
+    Raytracing.SbtHelper.AddHitGroup(L"HitGroup", BuffersVirtualAddresses);
+    
+    // Create the SBT on the upload heap
+    uint32_t SbtSize = 0;
+    SbtSize = Raytracing.SbtHelper.ComputeSBTSize();
+    Raytracing.SbtStorage = nv_helpers_dx12::CreateBuffer(Device.Get(), SbtSize,
+                                                          D3D12_RESOURCE_FLAG_NONE, 
+                                                          D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                          nv_helpers_dx12::kUploadHeapProps);
+    Raytracing.SbtHelper.Generate(Raytracing.SbtStorage.Get(), Raytracing.StateObjectProps.Get());
+}
 void
-DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
+DX12InitRenderer(HWND Window, renderer_config* Config)
 {
+    SupportConfig = {};
+    SupportConfig.VSync = true;
     uint32_t DXGIFactoryFlags = 0;
 #if SABLUJO_INTERNAL
     ComPtr<ID3D12Debug> DebugController;
@@ -467,6 +910,23 @@ DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
         }
     }
     
+    // Check Raytracing support;
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 Options5 = {}; 
+    if(SUCCEEDED(Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &Options5, sizeof(Options5))))
+    {
+        SupportConfig.UseRaytracing = Options5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_0;
+    }
+    else
+    {
+        SupportConfig.UseRaytracing = false;
+    }
+    
+    if(Config->UseRaytracing)
+    {
+        Config->UseRaytracing = SupportConfig.UseRaytracing;
+    }
+    
+    
     D3D12_COMMAND_QUEUE_DESC QueueDesc = {};
     QueueDesc.Type     = D3D12_COMMAND_LIST_TYPE_DIRECT;
     QueueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
@@ -475,8 +935,8 @@ DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
     
     ComPtr<IDXGISwapChain1> NewSwapChain;
     DXGI_SWAP_CHAIN_DESC1 SwapChainDesc = {};
-    SwapChainDesc.Width = Dimension.Width;
-    SwapChainDesc.Height = Dimension.Height;
+    SwapChainDesc.Width = Config->OutputDimensions.Width;
+    SwapChainDesc.Height = Config->OutputDimensions.Height;
     SwapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     //SwapChainDesc.Stero = FALSE;
     SwapChainDesc.SampleDesc.Count = 1;
@@ -485,7 +945,30 @@ DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
     //SwapChainDesc.Scaling = DXGI_SCALING_STRETCH;
     SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     //SwapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
-    //SwapChainDesc.Flags = 0;
+    SwapChainDesc.Flags = 0;
+    
+    // Check tearing support
+    {
+        // Rather than create the DXGI 1.5 factory interface directly, we create the
+        // DXGI 1.4 interface and query for the 1.5 interface. This is to enable the 
+        // graphics debugging tools which will not support the 1.5 factory interface 
+        // until a future update.
+        ComPtr<IDXGIFactory6> Factory6;
+        HRESULT HR = CreateDXGIFactory1(IID_PPV_ARGS(&Factory6));
+        if (SUCCEEDED(HR))
+        {
+            HR = Factory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &SupportConfig.AllowTearing, sizeof(SupportConfig.AllowTearing));
+        }
+        if (Config->AllowTearing)
+        {
+            Config->AllowTearing = SupportConfig.AllowTearing;
+        }
+        if (Config->AllowTearing)
+        {
+            Config->VSync = false;
+            SwapChainDesc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+        }
+    }
     
     ThrowIfFailed(Factory->CreateSwapChainForHwnd(CommandQueue.Get(), 
                                                   Window, 
@@ -541,17 +1024,30 @@ DX12InitRenderer(HWND Window, win32_window_dimension Dimension)
     
 #endif
     
+    if (SupportConfig.UseRaytracing)
+    {
+        
+        // Create the raytracing pipeline, associating the shader code to symbol names
+        // and to their root signatures, and defining the amount of memory carried by
+        // rays (ray payload)
+        CreateRaytracingPipeline(); // #DXR
+        
+        // Allocate the buffer storing the raytracing output, with the same dimensions
+        // as the target image
+        CreateRaytracingOutputBuffer(Config->OutputDimensions); // #DXR
+    }
+    
     Viewport.TopLeftX = 0;
     Viewport.TopLeftY = 0;
-    Viewport.Width = (float)Dimension.Width;
-    Viewport.Height = (float)Dimension.Height;
+    Viewport.Width = (float)Config->OutputDimensions.Width;
+    Viewport.Height = (float)Config->OutputDimensions.Height;
     Viewport.MinDepth = D3D12_MIN_DEPTH;
     Viewport.MaxDepth = D3D12_MAX_DEPTH;
     
     ScissorRect.left = 0;
     ScissorRect.top = 0;
-    ScissorRect.right = Dimension.Width;
-    ScissorRect.bottom = Dimension.Height;
+    ScissorRect.right = Config->OutputDimensions.Width;
+    ScissorRect.bottom = Config->OutputDimensions.Height;
     
     
     // Create descriptor heaps.
@@ -596,16 +1092,13 @@ DX12SubmitForRender(mesh_handle Mesh)
 }
 
 void
-DX12Render()
+DX12Render(renderer_config Config)
 {
     ThrowIfFailed(LoadingCommandList->Close());
     
     // Execute the loading command list.
     ID3D12CommandList* ppLoadingCommandLists[] = { LoadingCommandList.Get() };
     CommandQueue->ExecuteCommandLists(_countof(ppLoadingCommandLists), ppLoadingCommandLists);
-    ThrowIfFailed(LoadingCommandList->Reset(CommandAllocators[CurrentFrame][0].Get(), PipelineState.Get()));
-    
-    
     
     // Command list allocators can only be reset when the associated 
     // command lists have finished execution on the GPU; apps should use 
@@ -617,8 +1110,38 @@ DX12Render()
     // re-recording.
     ThrowIfFailed(CommandList->Reset(CommandAllocators[CurrentFrame][1].Get(), PipelineState.Get()));
     
-    // Set necessary state.
-    CommandList->SetGraphicsRootSignature(RootSignature.Get());
+    if(Config.UseRaytracing)
+    {
+        if(!Raytracing.BottomLevelAS)
+        {
+            // Setup the acceleration structures (AS) for raytracing. When setting up 
+            // geometry, each bottom-level AS has its own transform matrix. 
+            CreateAccelerationStructures(); 
+            
+            // Command lists are created in the recording state, but there is 
+            // nothing to record yet. The main loop expects it to be closed, so 
+            // close it now. 
+            //ThrowIfFailed(CommandList->Close());
+            
+            // Create the buffer containing the raytracing result (always output in a
+            // UAV), and create the heap referencing the resources used by the raytracing,
+            // such as the acceleration structure
+            CreateShaderResourceHeap(); // #DXR
+            
+            // Create the shader binding table and indicating which shaders
+            // are invoked for each instance in the AS
+            CreateShaderBindingTable();
+        }
+        
+        // Bind the raytracing pipeline
+        CommandList->SetPipelineState1(Raytracing.StateObject.Get());
+    }
+    else
+    {
+        // Set necessary state.
+        CommandList->SetGraphicsRootSignature(RootSignature.Get());
+    }
+    
     CommandList->RSSetViewports(1, &Viewport);
     CommandList->RSSetScissorRects(1, &ScissorRect);
     
@@ -639,34 +1162,113 @@ DX12Render()
     
     CommandList->OMSetRenderTargets(1, &RTVHandle, FALSE, nullptr);
     
-    // Record commands.
-    float ClearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
-    CommandList->ClearRenderTargetView(RTVHandle, ClearColor, 0, nullptr);
-    
-    // Set Camera
-    
-    XMMATRIX Model = XMMatrixIdentity();
-    //XMMATRIX Model = XMMatrixTranslation(0.0f, 0.0f, -10.0f);
-    CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &Model, 0);
-    CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &CurrentViewProjection, sizeof(XMMATRIX) / 4);
-    
-    CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    
-    while(!RenderList.empty())
+    // Record commands
+    if(Config.UseRaytracing && SupportConfig.UseRaytracing)
     {
-        const mesh_handle MeshHandle = RenderList.front();
-        const uint8_t VertexBuffIndex = MeshHandle >> 8;
-        const uint8_t IndexBuffIndex = MeshHandle & 0xFF;
-        const vertex_buffer& VertexBuffer = VertexBuffers[VertexBuffIndex];
-        const index_buffer& IndexBuffer = IndexBuffers[IndexBuffIndex];
-        CommandList->IASetVertexBuffers(0, 1, &VertexBuffer.BufferView);
-        CommandList->IASetIndexBuffer(&IndexBuffer.BufferView);
-        CommandList->DrawIndexedInstanced(IndexBuffer.IndexCount, 1, 0, 0, 0);
-        RenderList.pop();
+        // #DXR
+        // Bind the descriptor heap giving access to the top-level acceleration
+        // structure, as well as the raytracing output
+        std::vector<ID3D12DescriptorHeap*> Heaps = {Raytracing.SrvUavHeap.Get()};
+        CommandList->SetDescriptorHeaps((uint32_t)Heaps.size(), Heaps.data());
+        
+        // On the last frame, the raytracing output was used as a copy source, to
+        // copy its contents into the render target. Now we need to transition it to
+        // a UAV so that the shaders can write in it.
+        Barrier.Transition.pResource = Raytracing.OutputResource.Get();
+        Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        CommandList->ResourceBarrier(1, &Barrier);
+        
+        // Setup the raytracing task
+        D3D12_DISPATCH_RAYS_DESC Desc = {};
+        // The layout of the SBT is as follows: ray generation shader, miss
+        // shaders, hit groups. As described in the CreateShaderBindingTable method,
+        // all SBT entries of a given type have the same size to allow a fixed stride.
+        // The ray generation shaders are always at the beginning of the SBT.
+        
+        uint32_t RayGenerationSectionSizeInBytes = Raytracing.SbtHelper.GetRayGenSectionSize();
+        Desc.RayGenerationShaderRecord.StartAddress = Raytracing.SbtStorage->GetGPUVirtualAddress();
+        Desc.RayGenerationShaderRecord.SizeInBytes = RayGenerationSectionSizeInBytes;
+        
+        // The miss shaders are in the second SBT section, right after the ray
+        // generation shader. We have one miss shader for the camera rays and one
+        // for the shadow rays, so this section has a size of 2*m_sbtEntrySize. We
+        // also indicate the stride between the two miss shaders, which is the size
+        // of a SBT entry
+        uint32_t MissSectionSizeInBytes = Raytracing.SbtHelper.GetMissSectionSize();
+        Desc.MissShaderTable.StartAddress = Raytracing.SbtStorage->GetGPUVirtualAddress() + RayGenerationSectionSizeInBytes;
+        Desc.MissShaderTable.SizeInBytes = MissSectionSizeInBytes;
+        Desc.MissShaderTable.StrideInBytes = Raytracing.SbtHelper.GetMissEntrySize();
+        
+        // The hit groups section start after the miss shaders. In this sample we
+        // have one 1 hit group for the triangle
+        uint32_t HitGroupsSectionSize = Raytracing.SbtHelper.GetHitGroupSectionSize();
+        Desc.HitGroupTable.StartAddress = Raytracing.SbtStorage->GetGPUVirtualAddress() + RayGenerationSectionSizeInBytes + MissSectionSizeInBytes;
+        Desc.HitGroupTable.SizeInBytes = HitGroupsSectionSize;
+        Desc.HitGroupTable.StrideInBytes = Raytracing.SbtHelper.GetHitGroupEntrySize();
+        
+        // Dimensions of the image to render, identical to a kernel launch dimension
+        //TODO: Get the window dimensions here
+        Desc.Width = 1280;
+        Desc.Height = 720;
+        Desc.Depth = 1;
+        
+        // Dispatch the rays and write to the raytracing output
+        CommandList->DispatchRays(&Desc);
+        
+        // The raytracing output needs to be copied to the actual render target used
+        // for display. For this, we need to transition the raytracing output from a
+        // UAV to a copy source, and the render target buffer to a copy destination.
+        // We can then do the actual copy, before transitioning the render target
+        // buffer into a render target, that will be then used to display the image
+        Barrier.Transition.pResource = Raytracing.OutputResource.Get();
+        Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        CommandList->ResourceBarrier(1, &Barrier);
+        
+        Barrier.Transition.pResource = RenderTargets[CurrentFrame].Get();
+        Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+        CommandList->ResourceBarrier(1, &Barrier);
+        
+        CommandList->CopyResource(RenderTargets[CurrentFrame].Get(), Raytracing.OutputResource.Get());
+        
+        Barrier.Transition.pResource = RenderTargets[CurrentFrame].Get();
+        Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        CommandList->ResourceBarrier(1, &Barrier);
+        
+        RenderList = std::queue<mesh_handle>();
+    }
+    else
+    {
+        float ClearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
+        CommandList->ClearRenderTargetView(RTVHandle, ClearColor, 0, nullptr);
+        
+        // Set Camera
+        XMMATRIX Model = XMMatrixIdentity();
+        //XMMATRIX Model = XMMatrixTranslation(0.0f, 0.0f, -10.0f);
+        CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &Model, 0);
+        CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &CurrentViewProjection, sizeof(XMMATRIX) / 4);
+        
+        CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        
+        while(!RenderList.empty())
+        {
+            const mesh_handle MeshHandle = RenderList.front();
+            const uint8_t VertexBuffIndex = MeshHandle >> 8;
+            const uint8_t IndexBuffIndex = MeshHandle & 0xFF;
+            const vertex_buffer& VertexBuffer = VertexBuffers[VertexBuffIndex];
+            const index_buffer& IndexBuffer = IndexBuffers[IndexBuffIndex];
+            CommandList->IASetVertexBuffers(0, 1, &VertexBuffer.BufferView);
+            CommandList->IASetIndexBuffer(&IndexBuffer.BufferView);
+            CommandList->DrawIndexedInstanced(IndexBuffer.IndexCount, 1, 0, 0, 0);
+            RenderList.pop();
+        }
     }
     
-    Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     
+    Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     // Indicate that the back buffer will now be used to present.
     Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     CommandList->ResourceBarrier(1, &Barrier);
@@ -679,26 +1281,38 @@ DX12Render()
 }
 
 void
-DX12Present()
+DX12Present(renderer_config Config)
 {
-    ThrowIfFailed(SwapChain->Present(0, 0));
+    uint32_t SyncInterval = Config.VSync ? 1 : 0;
+    uint32_t Flags = 0;
+    if(Config.AllowTearing && !Config.VSync && SupportConfig.AllowTearing)
+    {
+        Flags |= DXGI_PRESENT_ALLOW_TEARING;
+    }
+    
+    ThrowIfFailed(SwapChain->Present(SyncInterval, Flags));
     
     // Schedule a Signal command in the queue.
-    uint64_t CurrentFenceValue = Synchronization.FenceValues[CurrentFrame];
-    ThrowIfFailed(CommandQueue->Signal(Synchronization.Fence.Get(), CurrentFenceValue));
+    const uint32_t GraphicsCommandList = 1;
+    uint64_t CurrentFenceValue = Synchronization[GraphicsCommandList].FenceValues[CurrentFrame];
+    ThrowIfFailed(CommandQueue->Signal(Synchronization[GraphicsCommandList].Fence.Get(), CurrentFenceValue));
     
     // Update the frame index.
     CurrentFrame = SwapChain->GetCurrentBackBufferIndex();
     
     // If the next frame is not ready to be rendered yet, wait until it is ready.
-    if (Synchronization.Fence->GetCompletedValue() < Synchronization.FenceValues[CurrentFrame])
+    if (Synchronization[GraphicsCommandList].Fence->GetCompletedValue() < Synchronization[GraphicsCommandList].FenceValues[CurrentFrame])
     {
-        ThrowIfFailed(Synchronization.Fence->SetEventOnCompletion(Synchronization.FenceValues[CurrentFrame], Synchronization.FenceEvent));
-        WaitForSingleObjectEx(Synchronization.FenceEvent, INFINITE, FALSE);
+        ThrowIfFailed(Synchronization[GraphicsCommandList].Fence->SetEventOnCompletion(Synchronization[GraphicsCommandList].FenceValues[CurrentFrame], Synchronization[GraphicsCommandList].FenceEvent));
+        WaitForSingleObjectEx(Synchronization[GraphicsCommandList].FenceEvent, INFINITE, FALSE);
     }
     
     // Set the fence value for the next frame.
-    Synchronization.FenceValues[CurrentFrame] = CurrentFenceValue + 1;
+    Synchronization[GraphicsCommandList].FenceValues[CurrentFrame] = CurrentFenceValue + 1;
+    
+    DX12WaitForCommandList(0);
+    ThrowIfFailed(CommandAllocators[CurrentFrame][0]->Reset());
+    ThrowIfFailed(LoadingCommandList->Reset(CommandAllocators[CurrentFrame][0].Get(), PipelineState.Get()));
 }
 
 void
@@ -706,7 +1320,8 @@ DX12ShutdownRenderer()
 {
     // Ensure that the GPU is no longer referencing resources that are about to be
     // cleaned up by the destructor.
-    DX12WaitForGpu();
-    
-    CloseHandle(Synchronization.FenceEvent);
+    DX12WaitForCommandList(0);
+    CloseHandle(Synchronization[0].FenceEvent);
+    DX12WaitForCommandList(1);
+    CloseHandle(Synchronization[1].FenceEvent);
 }
