@@ -6,12 +6,22 @@
 
 // TODO(Gouzi): Temporary global
 global_variable bool IsRunning;
+global_variable HWND Window_;
 //global_variable win32_offscreen_buffer BackBuffer;
 
 inline void
 DEBUGWin32PrintLine(char* String)
 {
     OutputDebugStringA(String);
+}
+
+inline vector2i 
+Win32GetCursorPosition()
+{
+    POINT Position = {};
+    GetCursorPos(&Position);
+    MapWindowPoints(HWND_DESKTOP, Window_, &Position, 1);
+    return {Position.x, Position.y};
 }
 
 inline FILETIME
@@ -249,6 +259,7 @@ WinMain(HINSTANCE Instance,
                             0);
         if(Window)
         {
+            Window_ = Window;
             // Init Renderer
             win32_window_dimension DefaultDimension = Win32GetWindowDimension(Window);
             Assert(DefaultDimension.Width == DefaultWidth && DefaultDimension.Height == DefaultHeight);
@@ -275,6 +286,7 @@ WinMain(HINSTANCE Instance,
 #else
             LPVOID BaseAddress = 0;
 #endif
+            GameMemory.Platform.GetCursorPosition = Win32GetCursorPosition;
             
             GameMemory.PermanentStorage = VirtualAlloc(BaseAddress, TotalSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
             GameMemory.TransientStorage = (uint8_t*)GameMemory.PermanentStorage + GameMemory.PermanentStorageSize;
@@ -317,7 +329,7 @@ WinMain(HINSTANCE Instance,
                 GameBuffer.Pitch = BackBuffer.Pitch;
                 if(Game.UpdateAndRender)
                 {
-                    Game.UpdateAndRender(&GameMemory, &GameBuffer);
+                    Game.UpdateAndRender(&GameMemory, &GameBuffer, MSPerFrame / 1000.0f);
                 }
                 
 #if RENDERING_API == WIN32_RENDERER

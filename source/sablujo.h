@@ -12,6 +12,7 @@ typedef int32_t debug_platform_format_string(char* Buffer,
                                              const char *format,
                                              ...);
 typedef void debug_platform_print_line(char* String);
+typedef vector2i platform_get_cursor_position();
 
 struct platform_calls
 {
@@ -19,6 +20,7 @@ struct platform_calls
     debug_platform_format_string* DEBUGFormatString;
     debug_platform_print_line* DEBUGPrintLine;
 #endif
+    platform_get_cursor_position* GetCursorPosition;
 };
 
 #ifdef INVALID_HANDLE
@@ -73,54 +75,28 @@ struct game_offscreen_buffer
     int32_t Pitch;
 };
 
-typedef void game_update_and_render(game_memory* Memory, game_offscreen_buffer* Buffer);
+typedef void game_update_and_render(game_memory* Memory, game_offscreen_buffer* Buffer, float dt);
 
 
 //////////////////
 // Game Specific
 //////////////////
+#define BOID_COUNT 2000
+#include "quadtree.h"
 
-struct camera
+struct boid
 {
-    matrix4 View;
-    matrix4 Projection;
-    float AspectRatio;
-    bool IsInitialized;
+    vector2 Position;
+    vector2 Direction;
 };
 
-struct mesh
-{
-    vector3* Vertices;
-    vector3* Normals;
-    uint32_t* Indices;
-    uint32_t VerticesCount;
-    uint32_t IndicesCount;
-    matrix4 Transform;
-    matrix4 InverseTransform;
-};
-
-#define SPHERE_SUBDIV 28 
-#define SPHERE_VERTEX_COUNT (SPHERE_SUBDIV * SPHERE_SUBDIV + 2)
-#define SPHERE_INDEX_COUNT (SPHERE_SUBDIV * 3 * 2 + (SPHERE_SUBDIV - 1) * (SPHERE_SUBDIV - 1) * 6)
-
-#if SABLUJO_INTERNAL
-struct render_stats
-{
-    uint32_t VerticesCount;
-    uint32_t TrianglesCount;
-    uint32_t PixelsSkipped;
-    uint32_t PixelsComputed;
-    uint32_t PixelsWasted;
-};
-#endif
 struct game_state
 {
-#if SABLUJO_INTERNAL
-    render_stats RenderStats;
-#endif
-    camera Camera;
-    mesh Meshes[2];
-    float YRot;
+    bool Init;
+    //vector2 BoidsPositions[BOID_COUNT];
+    //vector2 BoidsDirections[BOID_COUNT];
+    boid Boids[BOID_COUNT];
+    //quadtree QuadTree;
 };
 
 #define SABLUJO_H

@@ -7,7 +7,7 @@ set CommonCompilerDefines=-DSABLUJO_INTERNAL -DSABLUJO_SLOW -DSABLUJO_WIN32
 REM set CommonCompilerDefines=-DSABLUJO_WIN32
 set CommonLinkerFlags=-incremental:no -opt:ref
 
-set GameSourceFiles=..\source\sablujo.cpp ..\source\sablujo_maths.cpp ..\source\sablujo_geometry.cpp
+set GameSourceFiles=..\source\sablujo.cpp ..\source\sablujo_maths.cpp ..\source\sablujo_geometry.cpp ..\source\quadtree.cpp
 set GameCompilerFlags=-LD -Fmsablujo.map %CommonCompilerFlags% %CommonCompilerDefines%
 set GameLinkerFlags=-PDB:sablujo_%random%.pdb -EXPORT:GameUpdateAndRender %CommonLinkerFlags%
 
