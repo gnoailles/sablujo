@@ -228,8 +228,8 @@ WinMain(HINSTANCE Instance,
     
     if(RegisterClassA(&WindowClass))
     {
-        int32_t DefaultWidth = 1280;
-        int32_t DefaultHeight = 720;
+        int32_t DefaultWidth = 1920;
+        int32_t DefaultHeight = 1080;
         
         RECT WindowRect = {0, 0, DefaultWidth, DefaultHeight};
         AdjustWindowRect(&WindowRect, WS_OVERLAPPEDWINDOW|WS_VISIBLE, FALSE);
@@ -249,7 +249,6 @@ WinMain(HINSTANCE Instance,
                             0);
         if(Window)
         {
-            
             // Init Renderer
             win32_window_dimension DefaultDimension = Win32GetWindowDimension(Window);
             Assert(DefaultDimension.Width == DefaultWidth && DefaultDimension.Height == DefaultHeight);
@@ -288,7 +287,7 @@ WinMain(HINSTANCE Instance,
             LARGE_INTEGER LastCounter;
             QueryPerformanceCounter(&LastCounter);
             uint64_t LastCycleCount = __rdtsc();
-            
+            float MSPerFrame = 1000/60;
             while(IsRunning)
             {
                 FILETIME NewDLLWriteTime = Win32GetLastWriteTime(SourceGameCodeDLLFullPath);
@@ -338,7 +337,7 @@ WinMain(HINSTANCE Instance,
                 
                 uint64_t CyclesElapsed = EndCycleCount - LastCycleCount;
                 int64_t CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
-                float MSPerFrame = (float)((1000.0f*(double)CounterElapsed) / (double)PerfCountFrequency.QuadPart);
+                MSPerFrame = (float)((1000.0f*(double)CounterElapsed) / (double)PerfCountFrequency.QuadPart);
                 float FPS = PerfCountFrequency.QuadPart / (float)CounterElapsed;
                 float MCPF = (CyclesElapsed / (1000.0f * 1000.0f));
                 

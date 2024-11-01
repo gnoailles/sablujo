@@ -45,11 +45,9 @@ RenderRectangle(game_offscreen_buffer* Buffer,
 {
     for(uint32_t Y = Min.Y; Y < Max.Y; ++Y)
     {
-        // uint32_t* Pixel = (uint32_t*)(&((uint8_t*)Buffer->Memory)[Y * Buffer->Pitch + Min.X]);
         for(uint32_t X = Min.X; X < Max.X; ++X)
         {
             ((uint32_t*)Buffer->Memory)[Y * Buffer->Width + X] = ColorToUInt32(Color);
-            // *Pixel++ = ColorToUInt32(Color);
         }
     }
 }
@@ -412,10 +410,8 @@ RasterizeMesh(game_state* GameState,
 
 global_variable mesh_handle CubeVertexBuffer;
 
-extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* Buffer)
+void SetupAndRenderRasterizer(game_memory* Memory, game_offscreen_buffer* Buffer, game_state* GameState)
 {
-    Assert(sizeof(game_state) <= Memory->PermanentStorageSize);
-    game_state *GameState = (game_state *)Memory->PermanentStorage;
 #if SABLUJO_INTERNAL
     GameState->RenderStats = {};
 #endif
@@ -454,8 +450,6 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
                      Sphere->Vertices, Sphere->Normals, Sphere->Indices, 
                      SPHERE_VERTEX_COUNT, SPHERE_INDEX_COUNT);
     }
-    
-    ClearBuffer(Buffer);
     
     float AngleRad = 0.0f + GameState->YRot * PI_FLOAT / 180.0f;
     matrix4 YRotMatrix = GetYRotationMatrix(AngleRad);
@@ -504,4 +498,12 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* 
                                        100.0f * (float)PixelsWasted / (float)PixelsComputed);
     Memory->Platform.DEBUGPrintLine(StatsMessage);
 #endif
+}
+
+extern "C" void GameUpdateAndRender(game_memory* Memory, game_offscreen_buffer* Buffer)
+{
+    Assert(sizeof(game_state) <= Memory->PermanentStorageSize);
+    game_state *GameState = (game_state *)Memory->PermanentStorage;
+    ClearBuffer(Buffer);
+    SetupAndRenderRasterizer(Memory, Buffer, GameState);
 }

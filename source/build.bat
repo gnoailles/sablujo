@@ -18,7 +18,7 @@ set PlatformLinkerFlags=user32.lib gdi32.lib d3d12.lib dxgi.lib D3DCompiler.lib 
 
 REM Setup cl environment
 WHERE cl > nul 2> nul
-IF %ERRORLEVEL% NEQ 0 call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd" -no_logo -arch=x64 -host_arch=x64
+IF %ERRORLEVEL% NEQ 0 call "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd" -no_logo -arch=x64 -host_arch=x64
 
 IF NOT EXIST ..\build mkdir ..\build
 pushd ..\build

@@ -123,6 +123,35 @@ inline float Tangent(float Value)
     return Result;
 }
 
+struct random_series
+{
+    uint32_t State;
+};
+
+internal uint32_t XorShift32(random_series* Series)
+{
+	uint32_t x = Series->State;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+    Series->State = x;
+    
+    return x;
+}
+
+internal float
+RandomUnilateral(random_series* Series)
+{
+    return (float)XorShift32(Series) / (float)UINT32_MAX;
+}
+
+internal float
+RandomBilateral(random_series* Series)
+{
+    return 2.0f * RandomUnilateral(Series) - 1.0f;
+}
+
+
 // IMPORTANT: Only use for affine transformation where points are sure to be set to w = 1 
 vector3 MultPointMatrix(matrix4* Matrix, vector3* Vector);
 vector4 MultPointMatrix(matrix4* Matrix, vector4* Vector);
@@ -180,6 +209,137 @@ inline matrix4 GetZRotationMatrix(float AngleInRadians)
     Result.val[1][0] = Sin;
     return Result;
 }
+// Vector 2
+
+inline float MagnitudeSq(vector2 A)
+{
+    return A.X * A.X + A.Y * A.Y;
+};
+
+inline vector2
+Normalize(vector2 A)
+{
+    __m128 Vector = _mm_setr_ps(A.X, A.Y, 0.0f, 0.0f);
+    float LengthSq = MagnitudeSq(A);
+    if(LengthSq > 0.0000001f)
+    {
+        __m128 InvLength = _mm_rsqrt_ps(_mm_set_ps1(LengthSq));
+        Vector = _mm_mul_ps(Vector, InvLength);
+        A.X = Vector.m128_f32[0];
+        A.Y = Vector.m128_f32[1];
+    }
+    return A;
+}
+
+inline float
+Clamp(float A, float LowerBound, float UpperBound)
+{
+    return MAX(MIN(A, UpperBound), LowerBound);
+}
+
+inline uint32_t
+Clamp(uint32_t A, uint32_t LowerBound, uint32_t UpperBound)
+{
+    return MAX(MIN(A, UpperBound), LowerBound);
+}
+
+// Operators
+inline vector2 operator+(vector2 lhs, vector2 rhs)
+{
+    vector2 Result;
+    Result.X = lhs.X + rhs.X;
+    Result.Y = lhs.Y + rhs.Y;
+    return Result;
+}
+
+inline vector2 operator+(vector2 lhs, float rhs)
+{
+    vector2 Result;
+    Result.X = lhs.X + rhs;
+    Result.Y = lhs.Y + rhs;
+    return Result;
+}
+
+inline void operator+=(vector2& lhs, vector2 rhs)
+{
+    lhs.X += rhs.X;
+    lhs.Y += rhs.Y;
+}
+
+inline vector2 operator-(vector2 lhs, vector2 rhs)
+{
+    vector2 Result;
+    Result.X = lhs.X - rhs.X;
+    Result.Y = lhs.Y - rhs.Y;
+    return Result;
+}
+
+inline vector2 operator-(vector2 lhs, float rhs)
+{
+    vector2 Result;
+    Result.X = lhs.X - rhs;
+    Result.Y = lhs.Y - rhs;
+    return Result;
+}
+
+inline void operator-=(vector2& lhs, vector2 rhs)
+{
+    lhs.X -= rhs.X;
+    lhs.Y -= rhs.Y;
+}
+
+inline vector2 operator*(vector2 lhs, vector2 rhs)
+{
+    vector2 Result;
+    Result.X = lhs.X * rhs.X;
+    Result.Y = lhs.Y * rhs.Y;
+    return Result;
+}
+
+inline vector2 operator*(vector2 lhs, float rhs)
+{
+    vector2 Result;
+    Result.X = lhs.X * rhs;
+    Result.Y = lhs.Y * rhs;
+    return Result;
+}
+
+inline vector2 operator/(vector2 lhs, vector2 rhs)
+{
+    vector2 Result;
+    Result.X = lhs.X / rhs.X;
+    Result.Y = lhs.Y / rhs.Y;
+    return Result;
+}
+
+inline vector2 operator/(vector2 lhs, float rhs)
+{
+    vector2 Result;
+    if(rhs < EPSILON)
+    {
+        rhs = EPSILON;
+    }
+    Result.X = lhs.X / rhs;
+    Result.Y = lhs.Y / rhs;
+    return Result;
+}
+
+inline void operator/=(vector2& lhs, float rhs)
+{
+    lhs.X /= rhs;
+    lhs.Y /= rhs;
+}
+
+inline bool operator==(vector2 lhs, vector2 rhs)
+{
+    return lhs.X == rhs.X && lhs.Y == rhs.Y;
+}
+
+inline bool operator!=(vector2 lhs, vector2 rhs)
+{
+    return lhs.X != rhs.X && lhs.Y != rhs.Y;
+}
+
 
 // Vector 3
 // FUNCTIONS

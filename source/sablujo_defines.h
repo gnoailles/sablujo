@@ -11,7 +11,7 @@
 
 #define FLOAT_MAX 3.402823466e+38F
 #define FLOAT_MIN 1.175494e-38F
-
+#define EPSILON 0.0000001F
 /*
 #ifdef UINT16_MAX
 #undef UINT16_MAX
