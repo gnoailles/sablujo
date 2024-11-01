@@ -3,13 +3,14 @@
 // Raytracing output texture, accessed as a UAV
 RWTexture2D<float4> gOutput : register(u0);
 
-struct Camera
+struct ViewProjection
 {
-    matrix InvertViewProj;
-	float4 Position;
+	matrix ViewProjection;
+    matrix InverseView;
+    matrix InverseProjection;
 };
  
-ConstantBuffer<Camera> CameraCB : register(b0);
+ConstantBuffer<ViewProjection> CameraCB : register(b0);
 
 // Raytracing acceleration structure, accessed as a SRV
 RaytracingAccelerationStructure SceneBVH : register(t0);
@@ -22,22 +23,6 @@ float3 LinearToSrgb(float3 c)
     float3 sq3 = sqrt(sq2);
     float3 srgb = 0.662002687 * sq1 + 0.684122060 * sq2 - 0.323583601 * sq3 - 0.0225411470 * c;
     return srgb;
-}
-
-inline void GenerateCameraRay(uint2 index, out float3 Origin, out float3 Direction)
-{
-	float2 xy = index + 0.5f; // Center of pixel
-	float2 ScreenPos = xy / DispatchRaysDimensions().xy * 2.0f - 1.0f;
-
-	// Invert Y for DirectX-style coordinates
-	ScreenPos.y = -ScreenPos.y;
-
-	// Unproject the pixel coordinate into a ray.
-	float4 World = mul(float4(ScreenPos, 0, 1), CameraCB.InvertViewProj);
-
-	World.xyz /= World.w;
-	Origin = CameraCB.Position.xyz;
-	Direction = normalize(World.xyz - Origin);
 }
 
 [shader("raygeneration")] 
@@ -54,8 +39,11 @@ void RayGen() {
 
   // Define a ray, consisting of origin, direction, and the min-max distance values
   RayDesc ray;
-  ray.Origin = float3(d.x, -d.y, 1);
-  ray.Direction = float3(0, 0, -1);
+ 
+  ray.Origin = mul(CameraCB.InverseView, float4(d.x, -d.y, 1, 1));
+  float4 target = mul(CameraCB.InverseProjection, float4(0, 0, -1, 1));
+  ray.Direction = mul(CameraCB.InverseView, float4(target.xyz, 0));	
+
   ray.TMin = 0;
   ray.TMax = 100000;
 

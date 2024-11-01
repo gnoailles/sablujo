@@ -297,6 +297,7 @@ namespace nv_helpers_dx12
         HRESULT hr = 0;
         
         ID3DBlob* serializedRootSignature;
+        ID3DBlob* serializedLocalRootSignature;
         ID3DBlob* error;
         
         // Create the empty global root signature
@@ -310,29 +311,31 @@ namespace nv_helpers_dx12
                                            serializedRootSignature->GetBufferSize(),
                                            IID_PPV_ARGS(&m_dummyGlobalRootSignature));
         
-        serializedRootSignature->Release();
         if (FAILED(hr))
         {
             throw std::logic_error("Could not create the global root signature");
         }
+        serializedRootSignature->Release();
         
         // Create the local root signature, reusing the same descriptor but altering the creation flag
         rootDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
         hr = D3D12SerializeRootSignature(&rootDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-                                         &serializedRootSignature, &error);
+                                         &serializedLocalRootSignature, &error);
         if (FAILED(hr))
         {
+            OutputDebugStringA((LPCSTR)error->GetBufferPointer());
             throw std::logic_error("Could not serialize the local root signature");
         }
-        hr = m_device->CreateRootSignature(0, serializedRootSignature->GetBufferPointer(),
-                                           serializedRootSignature->GetBufferSize(),
+        SIZE_T localRootSignatureSize = serializedLocalRootSignature->GetBufferSize();
+        hr = m_device->CreateRootSignature(0, serializedLocalRootSignature->GetBufferPointer(),
+                                           localRootSignatureSize,
                                            IID_PPV_ARGS(&m_dummyLocalRootSignature));
         
-        serializedRootSignature->Release();
         if (FAILED(hr))
         {
             throw std::logic_error("Could not create the local root signature");
         }
+        serializedLocalRootSignature->Release();
     }
     
     //--------------------------------------------------------------------------------------------------

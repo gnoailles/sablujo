@@ -3,11 +3,21 @@
 #include <stdio.h>
 #include "win32_sablujo.h"
 #include "dx12_renderer.h"
+#include "sablujo_memory.h"
+
+#include "imgui.h"
+#include "backends/imgui_impl_win32.h"
+#include "backends/imgui_impl_dx12.h"
+
+// Forward declare message handler from imgui_impl_win32.cpp
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // TODO(Gouzi): Temporary global
 global_variable bool IsRunning;
+global_variable bool UseImGUI;
+global_variable bool IsImGUIInitialized;
 global_variable renderer_config RendererConfig;
-//global_variable win32_offscreen_buffer BackBuffer;
+global_variable uint8_t KeyStates;
 
 inline void
 DEBUGWin32PrintLine(char* String)
@@ -73,6 +83,11 @@ MainWindowCallback(HWND Window,
                    LPARAM LParam)
 {
     LRESULT Result = 0;
+    if (UseImGUI && ImGui_ImplWin32_WndProcHandler(Window, Message, WParam, LParam))
+    {
+        return true;
+    }
+    
     switch (Message)
     {
         case WM_ACTIVATEAPP:
@@ -98,14 +113,48 @@ MainWindowCallback(HWND Window,
             IsRunning = false;
         } break;
         
-        /*
+        
         case WM_KEYDOWN:
-        if (pSample)
         {
-            (static_cast<UINT8>(wParam));
+            switch(static_cast<UINT8>(WParam))
+            {
+                case 'W':
+                {
+                    KeyStates |= SABLUJO_KEY_W;
+                    break;
+                }
+                case 'A':
+                {
+                    KeyStates |= SABLUJO_KEY_A;
+                    break;
+                }
+                case 'S':
+                {
+                    KeyStates |= SABLUJO_KEY_S;
+                    break;
+                }
+                case 'D':
+                {
+                    KeyStates |= SABLUJO_KEY_D;
+                    break;
+                }
+                case 'Q':
+                {
+                    KeyStates |= SABLUJO_KEY_Q;
+                    break;
+                }
+                case 'E':
+                {
+                    KeyStates |= SABLUJO_KEY_E;
+                    break;
+                }
+                default:
+                break;
+                
+            }
         }
         return 0;
-        */
+        
         case WM_KEYUP:
         {
             switch(static_cast<UINT8>(WParam))
@@ -119,6 +168,62 @@ MainWindowCallback(HWND Window,
                 {
                     RendererConfig.UseRaytracing = !RendererConfig.UseRaytracing;
                 } break;
+                
+                case 'W':
+                {
+                    KeyStates &= ~(SABLUJO_KEY_W);
+                    break;
+                }
+                case 'A':
+                {
+                    KeyStates &= ~(SABLUJO_KEY_A);
+                    break;
+                }
+                case 'S':
+                {
+                    KeyStates &= ~(SABLUJO_KEY_S);
+                    break;
+                }
+                case 'D':
+                {
+                    KeyStates &= ~(SABLUJO_KEY_D);
+                    break;
+                }
+                case 'Q':
+                {
+                    KeyStates &= ~(SABLUJO_KEY_Q);
+                    break;
+                }
+                case 'E':
+                {
+                    KeyStates &= ~(SABLUJO_KEY_E);
+                    break;
+                }
+                
+                case VK_OEM_3:
+                {
+                    UseImGUI = !UseImGUI;
+                    RendererConfig.UseImGUI = UseImGUI;
+                    if (UseImGUI && !IsImGUIInitialized)
+                    {
+                        // Setup Dear ImGui context
+                        IMGUI_CHECKVERSION();
+                        ImGui::CreateContext();
+                        ImGuiIO& io = ImGui::GetIO(); (void)io;
+                        //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+                        //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+                        
+                        // Setup Dear ImGui style
+                        ImGui::StyleColorsDark();
+                        //ImGui::StyleColorsClassic();
+                        
+                        // Setup Platform/Renderer backends
+                        ImGui_ImplWin32_Init(Window);
+                        IsImGUIInitialized = true;
+                    }
+                    
+                    break;
+                }
                 
                 default:
                 break;
@@ -223,17 +328,29 @@ WinMain(HINSTANCE Instance,
                             0);
         if(Window)
         {
-            
-            // Init Renderer
-            win32_window_dimension DefaultDimension = Win32GetWindowDimension(Window);
-            viewport Viewport = {(uint32_t)DefaultDimension.Width, (uint32_t)DefaultDimension.Height};
-            Assert(DefaultDimension.Width == DefaultWidth && DefaultDimension.Height == DefaultHeight);
-            
-            RendererConfig = {};
-            RendererConfig.AllowTearing = true;
-            RendererConfig.UseRaytracing = true;
-            RendererConfig.OutputDimensions = DefaultDimension;
-            DX12InitRenderer(Window, &RendererConfig);
+            IsImGUIInitialized = false;
+#if SABLUJO_INTERNAL
+            UseImGUI = true;
+#else
+            UseImGUI = false;
+#endif
+            if (UseImGUI)
+            {
+                // Setup Dear ImGui context
+                IMGUI_CHECKVERSION();
+                ImGui::CreateContext();
+                ImGuiIO& io = ImGui::GetIO(); (void)io;
+                //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+                //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+                
+                // Setup Dear ImGui style
+                ImGui::StyleColorsDark();
+                //ImGui::StyleColorsClassic();
+                
+                // Setup Platform/Renderer backends
+                ImGui_ImplWin32_Init(Window);
+                IsImGUIInitialized = true;
+            }
             
             // Init Memory
             game_memory GameMemory = {};
@@ -255,6 +372,27 @@ WinMain(HINSTANCE Instance,
             GameMemory.PermanentStorage = VirtualAlloc(BaseAddress, TotalSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
             GameMemory.TransientStorage = (uint8_t*)GameMemory.PermanentStorage + GameMemory.PermanentStorageSize;
             
+            // Init Renderer
+            win32_window_dimension DefaultDimension = Win32GetWindowDimension(Window);
+            
+            viewport Viewport = {(uint32_t)DefaultDimension.Width, (uint32_t)DefaultDimension.Height};
+            Assert(DefaultDimension.Width == DefaultWidth && DefaultDimension.Height == DefaultHeight);
+            
+            
+            memory_area RendererArea = {};
+            RendererArea.Size = Megabytes(1);
+            GameMemory.TransientStorageSize -= RendererArea.Size;
+            RendererArea.Memory = (byte*)GameMemory.TransientStorage + GameMemory.TransientStorageSize;
+            RendererArea.FreeArea = RendererArea.Memory;
+            
+            RendererConfig = {};
+            RendererConfig.UseImGUI = UseImGUI;
+            RendererConfig.AllowTearing = true;
+            RendererConfig.UseRaytracing = true;
+            RendererConfig.OutputDimensions = DefaultDimension;
+            DX12InitRenderer(Window, &RendererConfig, &RendererArea);
+            
+            
             //Init Game
             win32_game_code Game = Win32LoadGameCode(SourceGameCodeDLLFullPath, TempGameCodeDLLFullPath);
             
@@ -263,6 +401,7 @@ WinMain(HINSTANCE Instance,
             LARGE_INTEGER LastCounter;
             QueryPerformanceCounter(&LastCounter);
             uint64_t LastCycleCount = __rdtsc();
+            bool show_demo_window = true;
             
             while(IsRunning)
             {
@@ -281,27 +420,44 @@ WinMain(HINSTANCE Instance,
                     {
                         IsRunning = false;
                     }
-                    
                     TranslateMessage(&Message);
                     DispatchMessageA(&Message);
                 }
+                GameMemory.Inputs.KeyStates = KeyStates;
+                
+                if(UseImGUI)
+                {
+                    // Start the Dear ImGui frame
+                    ImGui_ImplDX12_NewFrame();
+                    ImGui_ImplWin32_NewFrame();
+                    ImGui::NewFrame();
+                    
+                    // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
+                    if (show_demo_window)
+                        ImGui::ShowMetricsWindow(&show_demo_window);
+                }
+                
                 
                 if(Game.UpdateAndRender)
                 {
                     Game.UpdateAndRender(&GameMemory, &Viewport);
                 }
                 
+                if(UseImGUI)
+                {
+                    ImGui::Render();
+                }
                 DX12Render(RendererConfig);
                 DX12Present(RendererConfig);
                 
                 uint64_t EndCycleCount = __rdtsc();
                 LARGE_INTEGER EndCounter;
                 QueryPerformanceCounter(&EndCounter);
-                
-#if PRINT_FRAME_STATS
-                uint64_t CyclesElapsed = EndCycleCount - LastCycleCount;
                 int64_t CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
                 float MSPerFrame = (float)((1000.0f*(double)CounterElapsed) / (double)PerfCountFrequency.QuadPart);
+                GameMemory.DeltaTime = MSPerFrame / 1000.f;
+#if PRINT_FRAME_STATS
+                uint64_t CyclesElapsed = EndCycleCount - LastCycleCount;
                 float FPS = PerfCountFrequency.QuadPart / (float)CounterElapsed;
                 float MCPF = (CyclesElapsed / (1000.0f * 1000.0f));
                 
@@ -312,7 +468,13 @@ WinMain(HINSTANCE Instance,
                 LastCycleCount = EndCycleCount;
                 LastCounter = EndCounter;
             }
-            DX12ShutdownRenderer();
+            
+            DX12ShutdownRenderer(RendererConfig);
+            if(IsImGUIInitialized)
+            {
+                ImGui_ImplWin32_Shutdown();
+                ImGui::DestroyContext();
+            }
         }
         else
         {

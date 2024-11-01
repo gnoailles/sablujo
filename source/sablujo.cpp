@@ -1,7 +1,10 @@
 #include "sablujo.h"
 #include "sablujo_geometry.h"
 #include "sablujo_sse.h"
-
+#include "../vendor/glm/glm.hpp"
+#include "../vendor/glm/ext/matrix_clip_space.hpp"
+//#include "../vendor/glm/ext/matrix_transform.hpp"
+#include "../vendor/glm/gtx/transform.hpp"
 // internal void
 // RenderWeirdGradient(game_offscreen_buffer* Buffer, int32_t XOffset, int32_t YOffset)
 // {
@@ -31,27 +34,28 @@ InitializeCamera(camera* Camera, viewport* Viewport)
     float FOV = 90.0f; 
     float Near = 0.1f; 
     float Far = 100.0f; 
+    float HalfFOVRad = FOV * 0.5f * PI_FLOAT / 180.0f;
     Camera->AspectRatio = (float)Viewport->Width / (float)Viewport->Height; 
     
-    float HalfFOVRad = FOV * 0.5f * PI_FLOAT / 180.0f;
+    float H = Cosine(0.5f * HalfFOVRad) / Sine( 0.5f * HalfFOVRad);
+    float W = H * (float)Viewport->Height / (float)Viewport->Width;
+    
+    /*
     float Scale = Tangent(HalfFOVRad) * Near; 
     float Right = Camera->AspectRatio * Scale;
     float Left = -Right; 
     float Top = Scale;
     float Bottom = -Top; 
-    
+    */
     Camera->Projection = {};
     
-    Camera->Projection.val[0][0] = 2 * Near / (Right - Left); 
-    Camera->Projection.val[1][1] = 2 * Near / (Top - Bottom);
+    Camera->Projection.val[0][0] = W; 
+    Camera->Projection.val[1][1] = H;
+    Camera->Projection.val[2][2] = Far / (Far - Near); 
+    Camera->Projection.val[2][3] = 1; 
+    Camera->Projection.val[3][2] = -(Far * Near) / (Far - Near); 
     
-    Camera->Projection.val[2][0] = (Right + Left) / (Right - Left); 
-    Camera->Projection.val[2][1] = (Top + Bottom) / (Top - Bottom); 
-    Camera->Projection.val[2][2] = -(Far + Near) / (Far - Near); 
-    Camera->Projection.val[2][3] = -1; 
-    
-    
-    Camera->Projection.val[3][2] = -2 * Far * Near / (Far - Near); 
+    glm::mat4 GLMMatrix = glm::perspectiveFovLH_ZO(HalfFOVRad, (float)Viewport->Width, (float)Viewport->Height, Near, Far);
     
     Camera->View = {};
     Camera->View.val[0][0] = 1.0f; 
@@ -59,12 +63,17 @@ InitializeCamera(camera* Camera, viewport* Viewport)
     Camera->View.val[2][2] = 1.0f; 
     Camera->View.val[3][3] = 1.0f;
     
-    Camera->View.val[3][1] = -1.0f;
+    Camera->View.val[3][1] = 0.0f;
     Camera->View.val[3][2] = -2.0f;
-    float AngleRad = -10.0f * PI_FLOAT / 180.0f;
+    
+    Camera->View = LookAt({0.5f, -0.5f, -5.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+    /*float AngleRad = -10.0f * PI_FLOAT / 180.0f;
     matrix4 XRotMatrix = GetXRotationMatrix(AngleRad);
     Camera->View = MultMatrixMatrix(&Camera->View, &XRotMatrix);
-    Camera->IsInitialized = true;
+    glm::mat4 GLMXRot = glm::rotate(AngleRad, glm::vec3{1.0f, 0.0f, 0.0f});
+    glm::mat4 GLMView = glm::translate(glm::vec3{0.0f, 0.0f, -2.0f});
+    GLMMatrix = GLMView * GLMXRot;
+    */Camera->IsInitialized = true;
 }
 
 vector3 LightPosition = {-3.0f, -8.0f, 0.0f};
@@ -93,7 +102,7 @@ inline float linear_to_srgb(float x)
     return (x <= 0.0031308f) ? x * 12.92f : 1.055f * powf(x, 1.0f / 2.4f);
 }
 
-global_variable mesh_handle CubeMesh;
+global_variable handle<mesh> CubeMesh;
 
 extern "C" void GameUpdateAndRender(game_memory* Memory, viewport* Viewport)
 {
@@ -107,12 +116,39 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, viewport* Viewport)
     if(!Camera->IsInitialized)
     {
         InitializeCamera(Camera, Viewport);
+        if(Memory->Renderer.CreateVertexBuffer != nullptr)
+        {
+            Assert(Memory->Renderer.CreateVertexBuffer);
+            CubeMesh = Memory->Renderer.CreateVertexBuffer(&CubeVertices[0][0], CubeIndices, sizeof(float) * 7, CubeVerticesCount, CubeIndicesCount);
+        }
     }
-    
-    if(Memory->Renderer.CreateVertexBuffer != nullptr && CubeMesh == INVALID_HANDLE)
+    else
     {
-        Assert(Memory->Renderer.CreateVertexBuffer);
-        CubeMesh = Memory->Renderer.CreateVertexBuffer(&CubeVertices[0][0], CubeIndices, sizeof(float) * 7, CubeVerticesCount, CubeIndicesCount);
+        if (Memory->Inputs.KeyStates & SABLUJO_KEY_W)
+        {
+            Camera->View.val[3][2] += -1.0f * Memory->DeltaTime;
+        }
+        if (Memory->Inputs.KeyStates & SABLUJO_KEY_A)
+        {
+            Camera->View.val[3][0] += 1.0f * Memory->DeltaTime;
+        }
+        if (Memory->Inputs.KeyStates & SABLUJO_KEY_S)
+        {
+            Camera->View.val[3][2] += 1.0f * Memory->DeltaTime;
+        }
+        if (Memory->Inputs.KeyStates & SABLUJO_KEY_D)
+        {
+            Camera->View.val[3][0] += -1.0f * Memory->DeltaTime;
+        }
+        if (Memory->Inputs.KeyStates & SABLUJO_KEY_Q)
+        {
+            Camera->View.val[3][1] += -1.0f * Memory->DeltaTime;
+        }
+        if (Memory->Inputs.KeyStates & SABLUJO_KEY_E)
+        {
+            Camera->View.val[3][1] += 1.0f * Memory->DeltaTime;
+        }
+        
     }
     
 #if 0
@@ -145,13 +181,24 @@ extern "C" void GameUpdateAndRender(game_memory* Memory, viewport* Viewport)
     Cube->InverseTransform = TransposeMatrix(&Cube->InverseTransform);
 #endif
     Assert(Memory->Renderer.SetViewProjection);
-    matrix4 ViewProj = MultMatrixMatrix(&Camera->View, &Camera->Projection);
-    Memory->Renderer.SetViewProjection(&ViewProj.val[0][0]);
+    matrix4 ViewProj = MultMatrixMatrix(&Camera->Projection, &Camera->View);
+    Memory->Renderer.SetViewProjection(&Camera->View.val[0][0], &Camera->Projection.val[0][0]);
     Assert(Memory->Renderer.SubmitForRender);
-    Memory->Renderer.SubmitForRender(CubeMesh);
-    Memory->Renderer.SubmitForRender(CubeMesh);
-    Memory->Renderer.SubmitForRender(CubeMesh);
-    Memory->Renderer.SubmitForRender(CubeMesh);
+    
+    matrix4 CubeTransform = GetIdentityMatrix();
+    float InitialX = CubeTransform.val[3][0];
+    matrix4 YOffsetMatrix = GetTranslationMatrix({0.0f, 1.25f, 0.0f});
+    matrix4 XOffsetMatrix = GetTranslationMatrix({1.25f, 0.0f, 0.0f});
+    for(uint32_t y = 0; y < 2; ++y)
+    {
+        for(uint32_t x = 0; x < 2; ++x)
+        {
+            Memory->Renderer.SubmitForRender({CubeMesh, CubeTransform});
+            CubeTransform = MultMatrixMatrix(&CubeTransform, &XOffsetMatrix);
+        }
+        CubeTransform.val[3][0] = InitialX;
+        CubeTransform = MultMatrixMatrix(&CubeTransform, &YOffsetMatrix);
+    }
     
 #if SABLUJO_INTERNAL
     /*

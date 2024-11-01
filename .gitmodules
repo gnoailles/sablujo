@@ -1,0 +1,6 @@
+[submodule "imgui"]
+	path = imgui
+	url = git@gitlab.com:gnoailles/imgui.git
+[submodule "vendor/imgui"]
+	path = vendor/imgui
+	url = git@gitlab.com:gnoailles/imgui.git

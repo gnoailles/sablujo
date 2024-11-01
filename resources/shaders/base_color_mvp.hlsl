@@ -1,10 +1,17 @@
-struct ModelViewProjection
+struct Model
 {
-    matrix Model;
+	matrix Model;
+};
+
+struct ViewProjection
+{
 	matrix ViewProjection;
+	matrix InverseView;
+    matrix InverseProjection;
 };
  
-ConstantBuffer<ModelViewProjection> ModelViewProjectionCB : register(b0);
+ConstantBuffer<Model> ModelCB : register(b0);
+ConstantBuffer<ViewProjection> ViewProjectionCB : register(b1);
 
 struct VertexInput
 {
@@ -22,7 +29,7 @@ FSInput VS(VertexInput Vertex)
 {
     FSInput Result;
 
-    Result.Position = mul(mul(ModelViewProjectionCB.Model, ModelViewProjectionCB.ViewProjection), Vertex.Position);
+    Result.Position = mul(mul(ViewProjectionCB.ViewProjection, ModelCB.Model), Vertex.Position);
     Result.Normal = Vertex.Normal;
 
     return Result;

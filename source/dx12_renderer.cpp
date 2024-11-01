@@ -1,144 +1,20 @@
 #include "dx12_renderer.h"
 
 #include "sablujo.h"
+#include "dx12_raytracing.h"
+#include "backends/imgui_impl_dx12.h"
+#include <DXGIDebug.h>
 
-#include <d3d12.h>
-#include <dxgi1_6.h>
-#include <wrl.h>
-#include <D3DCompiler.h>
-#include <vector>
-#include <queue>
+global_variable dx12_renderer* Renderer;
 
-using Microsoft::WRL::ComPtr;
-
-global_variable const uint32_t FrameCount = 2;
-global_variable uint32_t CurrentFrame;
-
-
-// TODO(Gouzi): Temporary globals
-struct dx12_present_synchronization
+inline void
+ThrowIfFailed(HRESULT hr)
 {
-    HANDLE FenceEvent;
-    ComPtr<ID3D12Fence> Fence;
-    uint64_t FenceValues[FrameCount];
-};
-
-#include <directxmath.h>
-using namespace DirectX;
-struct vertex
-{
-    XMFLOAT4 Position;
-    XMFLOAT3 Normal;
-};
-
-//DXR Helpers
-#include <vector>
-#include <dxcapi.h>
-#include "DXRHelper.h"
-#include "nv_helpers_dx12/TopLevelASGenerator.h"
-#include "nv_helpers_dx12/BottomLevelASGenerator.h"
-#include "nv_helpers_dx12/RaytracingPipelineGenerator.h"
-#include "nv_helpers_dx12/RootSignatureGenerator.h"
-#include "nv_helpers_dx12/ShaderBindingTableGenerator.h"
-
-// #DXR
-struct acceleration_structure_buffers
-{ 
-    ComPtr<ID3D12Resource> Scratch; // Scratch memory for AS builder 
-    ComPtr<ID3D12Resource> Result; // Where the AS is 
-    ComPtr<ID3D12Resource> InstanceDesc; // Hold the matrices of the instances
-};
-
-struct raytracing_data
-{
-    ComPtr<ID3D12Resource> BottomLevelAS; // Storage for the bottom Level AS
-    nv_helpers_dx12::TopLevelASGenerator TopLevelASGenerator;
-    acceleration_structure_buffers TopLevelASBuffers;
-    std::vector<std::pair<ComPtr<ID3D12Resource>, DirectX::XMMATRIX>> Instances;
-    
-    ComPtr<IDxcBlob> RayGenLibrary;
-    ComPtr<IDxcBlob> HitLibrary;
-    ComPtr<IDxcBlob> MissLibrary;
-    ComPtr<ID3D12RootSignature> RayGenSignature;
-    ComPtr<ID3D12RootSignature> HitSignature;
-    ComPtr<ID3D12RootSignature> MissSignature;
-    // Ray tracing pipeline state
-    ComPtr<ID3D12StateObject> StateObject;
-    // Ray tracing pipeline state properties, retaining the shader identifiers
-    // to use in the Shader Binding Table
-    ComPtr<ID3D12StateObjectProperties> StateObjectProps;
-    
-    
-    ComPtr<ID3D12Resource> OutputResource;
-    ComPtr<ID3D12DescriptorHeap> SrvUavHeap;
-    
-    // Shader Binding Table
-    nv_helpers_dx12::ShaderBindingTableGenerator SbtHelper;
-    ComPtr<ID3D12Resource> SbtStorage;
-};
-
-global_variable raytracing_data Raytracing;
-
-global_variable dx12_present_synchronization Synchronization[2];
-global_variable ComPtr<IDXGISwapChain4> SwapChain;
-global_variable ComPtr<ID3D12CommandQueue> CommandQueue;
-global_variable ComPtr<ID3D12Device8> Device;
-global_variable ComPtr<ID3D12DescriptorHeap> RTVHeap;
-global_variable ComPtr<ID3D12Resource> RenderTargets[FrameCount];
-global_variable ComPtr<ID3D12CommandAllocator> CommandAllocators[FrameCount][2];
-
-
-global_variable ComPtr<ID3D12RootSignature> RootSignature;
-global_variable ComPtr<ID3D12PipelineState> PipelineState;
-global_variable ComPtr<ID3D12GraphicsCommandList4> CommandList;
-global_variable ComPtr<ID3D12GraphicsCommandList> LoadingCommandList;
-
-global_variable std::queue<mesh_handle> RenderList;
-
-global_variable D3D12_VIEWPORT Viewport;
-global_variable D3D12_RECT ScissorRect;
-
-global_variable XMMATRIX CurrentViewProjection;
-
-struct vertex_buffer
-{
-    vertex_buffer() : MainBuffer{}, StagingBuffer{}, BufferView{} {};
-    
-    vertex_buffer(vertex_buffer&& Other) : 
-    MainBuffer{std::move(Other.MainBuffer)}
-    , StagingBuffer{std::move(Other.StagingBuffer)} 
-    , BufferView{std::move(Other.BufferView)}
-    , VertexCount{Other.VertexCount}
-    {};
-    
-    ComPtr<ID3D12Resource> MainBuffer;
-    ComPtr<ID3D12Resource> StagingBuffer;
-    D3D12_VERTEX_BUFFER_VIEW BufferView;
-    uint32_t VertexCount {0};
-};
-
-struct index_buffer
-{
-    index_buffer() : MainBuffer{}, StagingBuffer{}, BufferView{} {};
-    
-    index_buffer(index_buffer&& Other) : 
-    MainBuffer{std::move(Other.MainBuffer)}
-    , StagingBuffer{std::move(Other.StagingBuffer)} 
-    , BufferView{std::move(Other.BufferView)}
-    , IndexCount{Other.IndexCount}
-    {};
-    
-    ComPtr<ID3D12Resource> MainBuffer;
-    ComPtr<ID3D12Resource> StagingBuffer;
-    D3D12_INDEX_BUFFER_VIEW BufferView;
-    uint32_t IndexCount {0};
-};
-
-global_variable std::vector<vertex_buffer> VertexBuffers;
-global_variable std::vector<index_buffer> IndexBuffers;
-
-
-global_variable renderer_config SupportConfig;
+    if (FAILED(hr))
+    {
+        Assert(false);
+    }
+}
 
 inline void
 ThrowIfFailed(HRESULT hr, ID3DBlob* error)
@@ -155,28 +31,55 @@ ThrowIfFailed(HRESULT hr, ID3DBlob* error)
 
 
 // Wait for pending GPU work to complete.
-void DX12WaitForCommandList(uint32_t CommandListIndex)
+void DX12WaitForCommandContext(command_context* CommandContext)
 {
     // Schedule a Signal command in the queue.
-    ThrowIfFailed(CommandQueue->Signal(Synchronization[CommandListIndex].Fence.Get(), Synchronization[CommandListIndex].FenceValues[CurrentFrame]));
+    ThrowIfFailed(Renderer->CommandQueue->Signal(CommandContext->Synchronization.Fence.Get(), 
+                                                 CommandContext->Synchronization.FenceValues[Renderer->CurrentFrame]));
     
     // Wait until the fence has been processed.
-    ThrowIfFailed(Synchronization[CommandListIndex].Fence->SetEventOnCompletion(Synchronization[CommandListIndex].FenceValues[CurrentFrame], 
-                                                                                Synchronization[CommandListIndex].FenceEvent));
-    WaitForSingleObjectEx(Synchronization[CommandListIndex].FenceEvent, INFINITE, FALSE);
+    ThrowIfFailed(CommandContext->Synchronization.Fence->SetEventOnCompletion(CommandContext->Synchronization.FenceValues[Renderer->CurrentFrame], 
+                                                                              CommandContext->Synchronization.FenceEvent));
+    WaitForSingleObjectEx(CommandContext->Synchronization.FenceEvent, INFINITE, FALSE);
     
     // Increment the fence value for the current frame.
-    Synchronization[CommandListIndex].FenceValues[CurrentFrame]++;
+    CommandContext->Synchronization.FenceValues[Renderer->CurrentFrame]++;
 }
 
-mesh_handle
+void InitCommandContextSynchronization(command_context* CommandContext)
+{
+    ThrowIfFailed(Renderer->Device->CreateFence(CommandContext->Synchronization.FenceValues[Renderer->CurrentFrame], 
+                                                D3D12_FENCE_FLAG_NONE, 
+                                                IID_PPV_ARGS(&CommandContext->Synchronization.Fence)));
+    CommandContext->Synchronization.FenceValues[Renderer->CurrentFrame]++;
+    
+    // Create an event handle to use for frame synchronization.
+    CommandContext->Synchronization.FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (CommandContext->Synchronization.FenceEvent == nullptr)
+    {
+        ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()));
+    }
+    
+    // Wait for the command list to execute; we are reusing the same command 
+    // list in our main loop but for now, we just want to wait for setup to 
+    // complete before continuing.
+    DX12WaitForCommandContext(CommandContext);
+}
+
+handle<mesh>
 DX12CreateVertexBuffer(float* Vertices, 
                        uint32_t* Indices, 
                        uint32_t VertexSize,
                        uint32_t VerticesCount,
                        uint32_t IndicesCount)
 {
-    mesh_handle Result{(uint16_t)((uint8_t)(VertexBuffers.size() << 8) | (uint8_t)IndexBuffers.size())};
+    handle<vertex_buffer> VBHandle = AllocatePoolInstance(&Renderer->VertexBuffers);
+    handle<index_buffer> IBHandle = AllocatePoolInstance(&Renderer->IndexBuffers);
+    handle<mesh> Result = AllocatePoolInstance(&Renderer->Meshes);
+    mesh* Mesh = GetPoolInstance(&Renderer->Meshes, Result);
+    Mesh->VertexBuffer = VBHandle;
+    Mesh->IndexBuffer = IBHandle;
+    
     const uint32_t VertexBufferSize = VertexSize * VerticesCount;
     const uint32_t IndexBufferSize = sizeof(uint32_t) * IndicesCount;
     
@@ -207,238 +110,148 @@ DX12CreateVertexBuffer(float* Vertices,
     D3D12_RESOURCE_DESC IndexBufferDesc = VertexBufferDesc;
     IndexBufferDesc.Width = IndexBufferSize;
     
-    vertex_buffer VertexBuffer;
-    index_buffer IndexBuffer;
-    ThrowIfFailed(Device->CreateCommittedResource(&UploadHeapProperties,
-                                                  D3D12_HEAP_FLAG_NONE,
-                                                  &VertexBufferDesc,
-                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                  nullptr,
-                                                  IID_PPV_ARGS(&VertexBuffer.StagingBuffer)));
+    dx12_vertex_buffer* VertexBuffer = GetPoolInstance(&Renderer->VertexBuffers, VBHandle);
+    dx12_index_buffer* IndexBuffer = GetPoolInstance(&Renderer->IndexBuffers, IBHandle);
     
-    ThrowIfFailed(Device->CreateCommittedResource(&UploadHeapProperties,
-                                                  D3D12_HEAP_FLAG_NONE,
-                                                  &IndexBufferDesc,
-                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                  nullptr,
-                                                  IID_PPV_ARGS(&IndexBuffer.StagingBuffer)));
+    ThrowIfFailed(Renderer->Device->CreateCommittedResource(&UploadHeapProperties,
+                                                            D3D12_HEAP_FLAG_NONE,
+                                                            &VertexBufferDesc,
+                                                            D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                            nullptr,
+                                                            IID_PPV_ARGS(&VertexBuffer->StagingBuffer)));
+    
+    ThrowIfFailed(Renderer->Device->CreateCommittedResource(&UploadHeapProperties,
+                                                            D3D12_HEAP_FLAG_NONE,
+                                                            &IndexBufferDesc,
+                                                            D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                            nullptr,
+                                                            IID_PPV_ARGS(&IndexBuffer->StagingBuffer)));
     
     D3D12_HEAP_PROPERTIES DefaultHeapProperties = {};
     DefaultHeapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
     
-    ThrowIfFailed(Device->CreateCommittedResource(&DefaultHeapProperties,
-                                                  D3D12_HEAP_FLAG_NONE,
-                                                  &VertexBufferDesc,
-                                                  D3D12_RESOURCE_STATE_COPY_DEST,
-                                                  nullptr,
-                                                  IID_PPV_ARGS(&VertexBuffer.MainBuffer)));
+    ThrowIfFailed(Renderer->Device->CreateCommittedResource(&DefaultHeapProperties,
+                                                            D3D12_HEAP_FLAG_NONE,
+                                                            &VertexBufferDesc,
+                                                            D3D12_RESOURCE_STATE_COPY_DEST,
+                                                            nullptr,
+                                                            IID_PPV_ARGS(&VertexBuffer->MainBuffer)));
     
-    ThrowIfFailed(Device->CreateCommittedResource(&DefaultHeapProperties,
-                                                  D3D12_HEAP_FLAG_NONE,
-                                                  &IndexBufferDesc,
-                                                  D3D12_RESOURCE_STATE_COPY_DEST,
-                                                  nullptr,
-                                                  IID_PPV_ARGS(&IndexBuffer.MainBuffer)));
+    ThrowIfFailed(Renderer->Device->CreateCommittedResource(&DefaultHeapProperties,
+                                                            D3D12_HEAP_FLAG_NONE,
+                                                            &IndexBufferDesc,
+                                                            D3D12_RESOURCE_STATE_COPY_DEST,
+                                                            nullptr,
+                                                            IID_PPV_ARGS(&IndexBuffer->MainBuffer)));
     
-    /*
-    D3D12_SUBRESOURCE_DATA SubresourceData = {};
-    SubresourceData.pData = Vertices;
-    SubresourceData.RowPitch = VertexBufferSize;
-    SubresourceData.SlicePitch = SubresourceData.RowPitch;
-    
-    UpdateSubresources(LoadingCommandList.Get(), 
-                       VertexBuffer.MainBuffer.Get(),
-                       VertexBuffer.StagingBuffer.Get(),
-                       0, 0, 1,
-                       &SubresourceData);
-    */
     
     uint8_t* VertexDataBegin;
     D3D12_RANGE ReadRange = {0, 0}; // We do not intend to read from this resource on the CPU.
-    ThrowIfFailed(VertexBuffer.StagingBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&VertexDataBegin)));
+    ThrowIfFailed(VertexBuffer->StagingBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&VertexDataBegin)));
     memcpy(VertexDataBegin, Vertices, VertexBufferSize);
-    VertexBuffer.StagingBuffer->Unmap(0, nullptr);
+    VertexBuffer->StagingBuffer->Unmap(0, nullptr);
     
-    LoadingCommandList->CopyBufferRegion(VertexBuffer.MainBuffer.Get(), 0, 
-                                         VertexBuffer.StagingBuffer.Get(), 0, 
-                                         VertexBufferSize);
+    Renderer->LoadingCommandContext.CommandList->CopyBufferRegion(VertexBuffer->MainBuffer.Get(), 0, 
+                                                                  VertexBuffer->StagingBuffer.Get(), 0, 
+                                                                  VertexBufferSize);
     
     // Copy the data to the index buffer.
     uint8_t* IndexDataBegin;
-    ThrowIfFailed(IndexBuffer.StagingBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&IndexDataBegin)));
+    ThrowIfFailed(IndexBuffer->StagingBuffer->Map(0, &ReadRange, reinterpret_cast<void**>(&IndexDataBegin)));
     memcpy(IndexDataBegin, Indices, IndexBufferSize);
-    IndexBuffer.StagingBuffer->Unmap(0, nullptr);
+    IndexBuffer->StagingBuffer->Unmap(0, nullptr);
     
-    LoadingCommandList->CopyBufferRegion(IndexBuffer.MainBuffer.Get(), 0, 
-                                         IndexBuffer.StagingBuffer.Get(), 0, 
-                                         IndexBufferSize);
+    Renderer->LoadingCommandContext.CommandList->CopyBufferRegion(IndexBuffer->MainBuffer.Get(), 0, 
+                                                                  IndexBuffer->StagingBuffer.Get(), 0, 
+                                                                  IndexBufferSize);
     
     // Initialize the vertex buffer view.
-    VertexBuffer.BufferView.BufferLocation = VertexBuffer.MainBuffer->GetGPUVirtualAddress();
-    VertexBuffer.BufferView.StrideInBytes = VertexSize;
-    VertexBuffer.BufferView.SizeInBytes = VertexBufferSize;
-    VertexBuffer.VertexCount = VerticesCount;
+    VertexBuffer->BufferView.BufferLocation = VertexBuffer->MainBuffer->GetGPUVirtualAddress();
+    VertexBuffer->BufferView.StrideInBytes = VertexSize;
+    VertexBuffer->BufferView.SizeInBytes = VertexBufferSize;
+    VertexBuffer->VertexCount = VerticesCount;
     
     // Initialize the index buffer view.
-    IndexBuffer.BufferView.BufferLocation = IndexBuffer.MainBuffer->GetGPUVirtualAddress();
-    IndexBuffer.BufferView.Format = DXGI_FORMAT_R32_UINT;
-    IndexBuffer.BufferView.SizeInBytes = IndexBufferSize;
-    IndexBuffer.IndexCount = IndicesCount;
+    IndexBuffer->BufferView.BufferLocation = IndexBuffer->MainBuffer->GetGPUVirtualAddress();
+    IndexBuffer->BufferView.Format = DXGI_FORMAT_R32_UINT;
+    IndexBuffer->BufferView.SizeInBytes = IndexBufferSize;
+    IndexBuffer->IndexCount = IndicesCount;
     
-    VertexBuffers.emplace_back(std::move(VertexBuffer));
-    IndexBuffers.emplace_back(std::move(IndexBuffer));
     return Result;
 }
 
-//-----------------------------------------------------------------------------
-//
-// Create a bottom-level acceleration structure based on a list of vertex
-// buffers in GPU memory along with their vertex count. The build is then done
-// in 3 steps: gathering the geometry, computing the sizes of the required
-// buffers, and building the actual AS
-//
-
-acceleration_structure_buffers 
-CreateBottomLevelAS()
-{ 
-    nv_helpers_dx12::BottomLevelASGenerator BottomLevelAS; 
-    // Adding all vertex buffers and not transforming their position. 
-    for (uint32_t BuffIndex = 0; BuffIndex < VertexBuffers.size(); ++BuffIndex) 
-    { 
-        BottomLevelAS.AddVertexBuffer(VertexBuffers[BuffIndex].MainBuffer.Get(), 0, VertexBuffers[BuffIndex].VertexCount, sizeof(vertex), 
-                                      IndexBuffers[BuffIndex].MainBuffer.Get(), 0, IndexBuffers[BuffIndex].IndexCount,
-                                      0, 0); 
-    } 
-    // The AS build requires some scratch space to store temporary information. 
-    // The amount of scratch memory is dependent on the scene complexity. 
-    uint64_t ScratchSizeInBytes = 0; 
-    // The final AS also needs to be stored in addition to the existing vertex 
-    // buffers. It size is also dependent on the scene complexity. 
-    uint64_t ResultSizeInBytes = 0; 
-    BottomLevelAS.ComputeASBufferSizes(Device.Get(), false, &ScratchSizeInBytes, &ResultSizeInBytes); 
-    // Once the sizes are obtained, the application is responsible for allocating 
-    // the necessary buffers. Since the entire generation will be done on the GPU, 
-    // we can directly allocate those on the default heap 
-    acceleration_structure_buffers Buffers; 
-    Buffers.Scratch = nv_helpers_dx12::CreateBuffer(Device.Get(), 
-                                                    ScratchSizeInBytes, 
-                                                    D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
-                                                    D3D12_RESOURCE_STATE_COMMON, 
-                                                    nv_helpers_dx12::kDefaultHeapProps); 
-    Buffers.Result = nv_helpers_dx12::CreateBuffer(Device.Get(), 
-                                                   ResultSizeInBytes, 
-                                                   D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
-                                                   D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, 
-                                                   nv_helpers_dx12::kDefaultHeapProps); 
-    // Build the acceleration structure. Note that this call integrates a barrier 
-    // on the generated AS, so that it can be used to compute a top-level AS right 
-    // after this method. 
-    BottomLevelAS.Generate(CommandList.Get(), 
-                           Buffers.Scratch.Get(), 
-                           Buffers.Result.Get(), 
-                           false, 
-                           nullptr); 
-    return Buffers;
+handle<const_buffer> DX12CreateConstBuffer(uint32_t Size)
+{
+    handle<const_buffer> BufferHandle = AllocatePoolInstance(&Renderer->ConstBuffers);
+    dx12_const_buffer* ConstBuffer = GetPoolInstance(&Renderer->ConstBuffers, BufferHandle);
+    ConstBuffer->Size = Size;
+    
+    D3D12_HEAP_PROPERTIES UploadHeapProperties = {};
+    UploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
+    /*
+    // Specifies the default heap. This heap type experiences the most bandwidth for
+    // the GPU, but cannot provide CPU access.
+    static const D3D12_HEAP_PROPERTIES kDefaultHeapProps = {
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_CPU_PAGE_PROPERTY_UNKNOWN, D3D12_MEMORY_POOL_UNKNOWN, 0, 0};
+    */
+    
+    uint32_t AllocatedSize = MAX(Size, 256);
+    Assert(AllocatedSize % 256 == 0);
+    
+    D3D12_RESOURCE_DESC BufferDesc = {};
+    BufferDesc.Alignment = 0;
+    BufferDesc.DepthOrArraySize = 1;
+    BufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    BufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    BufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+    BufferDesc.Height = 1;
+    BufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    BufferDesc.MipLevels = 1;
+    BufferDesc.SampleDesc.Count = 1;
+    BufferDesc.SampleDesc.Quality = 0;
+    BufferDesc.Width = AllocatedSize;
+    
+    ThrowIfFailed(Renderer->Device->CreateCommittedResource(&UploadHeapProperties, 
+                                                            D3D12_HEAP_FLAG_NONE, 
+                                                            &BufferDesc,
+                                                            D3D12_RESOURCE_STATE_GENERIC_READ, 
+                                                            nullptr, 
+                                                            IID_PPV_ARGS(&ConstBuffer->MainBuffer)));
+    
+    D3D12_DESCRIPTOR_HEAP_DESC HeapDescription = {};
+    HeapDescription.NumDescriptors = 1;
+    HeapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    HeapDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    
+    ThrowIfFailed(Renderer->Device->CreateDescriptorHeap(&HeapDescription, IID_PPV_ARGS(&ConstBuffer->Heap)));
+    
+    // Describe and create the constant buffer view. 
+    D3D12_CONSTANT_BUFFER_VIEW_DESC CBVDescription = {}; 
+    CBVDescription.BufferLocation = ConstBuffer->MainBuffer->GetGPUVirtualAddress(); 
+    CBVDescription.SizeInBytes = AllocatedSize; 
+    // Get a handle to the heap memory on the CPU side, to be able to write the 
+    // descriptors directly 
+    D3D12_CPU_DESCRIPTOR_HANDLE SRVHandle = ConstBuffer->Heap->GetCPUDescriptorHandleForHeapStart(); 
+    Renderer->Device->CreateConstantBufferView(&CBVDescription, SRVHandle);
+    return BufferHandle;
 }
 
-//-----------------------------------------------------------------------------
-// Create the main acceleration structure that holds all instances of the scene.
-// Similarly to the bottom-level AS generation, it is done in 3 steps: gathering
-// the instances, computing the memory requirements for the AS, and building the
-// AS itself
-//
-
-// pair of bottom level AS and matrix of the instance
-void CreateTopLevelAS(const std::vector<std::pair<ComPtr<ID3D12Resource>, DirectX::XMMATRIX>> &Instances)
-{ 
-    // Gather all the instances into the builder helper 
-    for(size_t i = 0; i < Instances.size(); i++)
-    { 
-        Raytracing.TopLevelASGenerator.AddInstance(Instances[i].first.Get(), 
-                                                   Instances[i].second, 
-                                                   static_cast<uint32_t>(i), 
-                                                   static_cast<uint32_t>(0));
-    } 
+void DX12UpdateConstBuffer(handle<const_buffer> BufferHandle, void* Data, uint32_t Size)
+{
+    dx12_const_buffer* ConstBuffer = GetPoolInstance(&Renderer->ConstBuffers, BufferHandle);
+    Assert(Size <= ConstBuffer->Size);
+    // Raytracing has to do the contrary of rasterization: rays are defined in 
+    // camera space, and are transformed into world space. To do this, we need to 
+    // store the inverse matrices as well. 
     
-    // As for the bottom-level AS, the building the AS requires some scratch space 
-    // to store temporary data in addition to the actual AS. In the case of the 
-    // top-level AS, the instance descriptors also need to be stored in GPU 
-    // memory. This call outputs the memory requirements for each (scratch, 
-    // results, instance descriptors) so that the application can allocate the 
-    // corresponding memory 
-    uint64_t ScratchSize; 
-    uint64_t ResultSize;
-    uint64_t InstanceDescsSize;
-    Raytracing.TopLevelASGenerator.ComputeASBufferSizes(Device.Get(), 
-                                                        true, 
-                                                        &ScratchSize, 
-                                                        &ResultSize, 
-                                                        &InstanceDescsSize); 
-    
-    // Create the scratch and result buffers. Since the build is all done on GPU, 
-    // those can be allocated on the default heap 
-    Raytracing.TopLevelASBuffers.Scratch = nv_helpers_dx12::CreateBuffer(Device.Get(), 
-                                                                         ScratchSize, 
-                                                                         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
-                                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 
-                                                                         nv_helpers_dx12::kDefaultHeapProps); 
-    Raytracing.TopLevelASBuffers.Result = nv_helpers_dx12::CreateBuffer(Device.Get(), 
-                                                                        ResultSize, 
-                                                                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
-                                                                        D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, 
-                                                                        nv_helpers_dx12::kDefaultHeapProps); 
-    
-    // The buffer describing the instances: ID, shader binding information, 
-    // matrices ... Those will be copied into the buffer by the helper through 
-    // mapping, so the buffer has to be allocated on the upload heap. 
-    Raytracing.TopLevelASBuffers.InstanceDesc = nv_helpers_dx12::CreateBuffer(Device.Get(), 
-                                                                              InstanceDescsSize, 
-                                                                              D3D12_RESOURCE_FLAG_NONE, 
-                                                                              D3D12_RESOURCE_STATE_GENERIC_READ, 
-                                                                              nv_helpers_dx12::kUploadHeapProps);
-    
-    // After all the buffers are allocated, or if only an update is required, we 
-    // can build the acceleration structure. Note that in the case of the update 
-    // we also pass the existing AS as the 'previous' AS, so that it can be 
-    // refitted in place. 
-    Raytracing.TopLevelASGenerator.Generate(CommandList.Get(), 
-                                            Raytracing.TopLevelASBuffers.Scratch.Get(), 
-                                            Raytracing.TopLevelASBuffers.Result.Get(), 
-                                            Raytracing.TopLevelASBuffers.InstanceDesc.Get());
-}
-
-//-----------------------------------------------------------------------------
-//
-// Combine the BLAS and TLAS builds to construct the entire acceleration
-// structure required to raytrace the scene
-//
-void CreateAccelerationStructures() 
-{ 
-    // Build the bottom AS from the Triangle vertex buffer 
-    acceleration_structure_buffers BottomLevelBuffers = CreateBottomLevelAS(); 
-    
-    // Just one instance for now 
-    
-    Raytracing.Instances = {{BottomLevelBuffers.Result, XMMatrixIdentity()}}; 
-    CreateTopLevelAS(Raytracing.Instances); 
-    
-    
-    const uint32_t GraphicsCommandList = 1;
-    // Flush the command list and wait for it to finish 
-    CommandList->Close(); 
-    ID3D12CommandList *ppCommandLists[] = {CommandList.Get()}; 
-    CommandQueue->ExecuteCommandLists(1, ppCommandLists); 
-    Synchronization[GraphicsCommandList].FenceValues[CurrentFrame]++; 
-    CommandQueue->Signal(Synchronization[GraphicsCommandList].Fence.Get(), Synchronization[GraphicsCommandList].FenceValues[CurrentFrame]); 
-    Synchronization[GraphicsCommandList].Fence->SetEventOnCompletion(Synchronization[GraphicsCommandList].FenceValues[CurrentFrame], Synchronization[GraphicsCommandList].FenceEvent); 
-    WaitForSingleObject(Synchronization[GraphicsCommandList].FenceEvent, INFINITE); 
-    
-    // Once the command list is finished executing, reset it to be reused for 
-    // rendering 
-    ThrowIfFailed(CommandList->Reset(CommandAllocators[CurrentFrame][GraphicsCommandList].Get(), PipelineState.Get())); 
-    // Store the AS buffers. The rest of the buffers will be released once we exit 
-    // the function 
-    Raytracing.BottomLevelAS = BottomLevelBuffers.Result;
+    /*XMVECTOR det; 
+    matrices[2] = XMMatrixInverse(&det, matrices[0]); 
+    matrices[3] = XMMatrixInverse(&det, matrices[1]); 
+*/
+    uint8_t *BufferData; 
+    ThrowIfFailed(ConstBuffer->MainBuffer->Map(0, nullptr, (void **)&BufferData)); 
+    memcpy(BufferData, Data, Size); 
+    ConstBuffer->MainBuffer->Unmap(0, nullptr);
 }
 
 void
@@ -447,22 +260,44 @@ DX12LoadAssets()
     // Create a root signature.
     D3D12_FEATURE_DATA_ROOT_SIGNATURE FeatureData = {};
     FeatureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
-    if (FAILED(Device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &FeatureData, sizeof(FeatureData))))
+    if (FAILED(Renderer->Device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &FeatureData, sizeof(FeatureData))))
     {
         FeatureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
     }
     
+    /*
     D3D12_ROOT_PARAMETER1 RootParameters[1];
     RootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     RootParameters[0].Constants.ShaderRegister = 0;
     RootParameters[0].Constants.RegisterSpace = 0;
     RootParameters[0].Constants.Num32BitValues = sizeof(XMMATRIX) * 2 / 4;
     RootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    */
+    
+    D3D12_ROOT_PARAMETER1 RootParameters[2];
+    RootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    RootParameters[0].Constants.ShaderRegister = 0;
+    RootParameters[0].Constants.RegisterSpace = 0;
+    RootParameters[0].Constants.Num32BitValues = sizeof(XMMATRIX) / 4;
+    RootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    
+    D3D12_DESCRIPTOR_RANGE1 DescriptorRanges[1];
+    DescriptorRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+    DescriptorRanges[0].NumDescriptors = 1;
+    DescriptorRanges[0].BaseShaderRegister = 1;
+    DescriptorRanges[0].RegisterSpace = 0;
+    DescriptorRanges[0].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+    DescriptorRanges[0].OffsetInDescriptorsFromTableStart = 0;
+    
+    RootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    RootParameters[1].DescriptorTable.NumDescriptorRanges = ArrayCount(DescriptorRanges);
+    RootParameters[1].DescriptorTable.pDescriptorRanges = DescriptorRanges;
+    RootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     
     // Create an empty root signature.
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC VersionedRootSignatureDesc;
     VersionedRootSignatureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
-    VersionedRootSignatureDesc.Desc_1_1.NumParameters = 1;
+    VersionedRootSignatureDesc.Desc_1_1.NumParameters = ArrayCount(RootParameters);
     VersionedRootSignatureDesc.Desc_1_1.pParameters = RootParameters;
     VersionedRootSignatureDesc.Desc_1_1.NumStaticSamplers = 0;
     VersionedRootSignatureDesc.Desc_1_1.pStaticSamplers = nullptr;
@@ -476,17 +311,15 @@ DX12LoadAssets()
         D3D12_ROOT_SIGNATURE_FLAG_DENY_AMPLIFICATION_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_MESH_SHADER_ROOT_ACCESS;
     
-    // A single 32-bit constant root parameter that is used by the vertex shader.
-    
     ComPtr<ID3DBlob> Signature;
     ComPtr<ID3DBlob> Error;
     ThrowIfFailed(D3D12SerializeVersionedRootSignature(&VersionedRootSignatureDesc, 
                                                        &Signature, 
                                                        &Error));
-    ThrowIfFailed(Device->CreateRootSignature(0, 
-                                              Signature->GetBufferPointer(), 
-                                              Signature->GetBufferSize(), 
-                                              IID_PPV_ARGS(&RootSignature)));
+    ThrowIfFailed(Renderer->Device->CreateRootSignature(0, 
+                                                        Signature->GetBufferPointer(), 
+                                                        Signature->GetBufferSize(), 
+                                                        IID_PPV_ARGS(&Renderer->RootSignature)));
     
     
     // Create the pipeline state, which includes compiling and loading shaders.
@@ -524,7 +357,7 @@ DX12LoadAssets()
     
     // Pipeline State Object
     D3D12_GRAPHICS_PIPELINE_STATE_DESC PSODesc = {};
-    PSODesc.pRootSignature = RootSignature.Get();
+    PSODesc.pRootSignature = Renderer->RootSignature.Get();
     PSODesc.VS = D3D12_SHADER_BYTECODE{VertexShader->GetBufferPointer(), VertexShader->GetBufferSize()};
     PSODesc.PS = D3D12_SHADER_BYTECODE{PixelShader->GetBufferPointer(), PixelShader->GetBufferSize()};
     
@@ -559,7 +392,7 @@ DX12LoadAssets()
     // Default rasterizer state
     PSODesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     PSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
-    PSODesc.RasterizerState.FrontCounterClockwise = FALSE;
+    PSODesc.RasterizerState.FrontCounterClockwise = TRUE;
     PSODesc.RasterizerState.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
     PSODesc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
     PSODesc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
@@ -583,304 +416,60 @@ DX12LoadAssets()
     // PSODesc.CachedPSO;
     // PSODesc.Flags;
     
-    ThrowIfFailed(Device->CreateGraphicsPipelineState(&PSODesc, IID_PPV_ARGS(&PipelineState)));
+    ThrowIfFailed(Renderer->Device->CreateGraphicsPipelineState(&PSODesc, IID_PPV_ARGS(&Renderer->PipelineState)));
     
     
     // Create the command list
     // Main command list is created in a closed state
-    ThrowIfFailed(Device->CreateCommandList1(0, 
-                                             D3D12_COMMAND_LIST_TYPE_DIRECT, 
-                                             D3D12_COMMAND_LIST_FLAG_NONE,
-                                             IID_PPV_ARGS(&CommandList)));
+    ThrowIfFailed(Renderer->Device->CreateCommandList1(0, 
+                                                       D3D12_COMMAND_LIST_TYPE_DIRECT, 
+                                                       D3D12_COMMAND_LIST_FLAG_NONE,
+                                                       IID_PPV_ARGS(&Renderer->MainCommandContext.CommandList)));
     // Loading command list is created in an opened state 
     // since we expect loads to happen on first frames.
-    ThrowIfFailed(Device->CreateCommandList(0, 
-                                            D3D12_COMMAND_LIST_TYPE_DIRECT, 
-                                            CommandAllocators[CurrentFrame][0].Get(), 
-                                            PipelineState.Get(),
-                                            IID_PPV_ARGS(&LoadingCommandList)));
-    
-    // Command lists are created in the recording state, but there is nothing
-    // to record yet. The main loop expects it to be closed, so close it now.
-    //ThrowIfFailed(CommandList->Close());
-    
-    //DX12CreateVertexBuffer();
+    ThrowIfFailed(Renderer->Device->CreateCommandList(0, 
+                                                      D3D12_COMMAND_LIST_TYPE_DIRECT, 
+                                                      Renderer->LoadingCommandContext.CommandAllocators[Renderer->CurrentFrame].Get(), 
+                                                      Renderer->PipelineState.Get(),
+                                                      IID_PPV_ARGS(&Renderer->LoadingCommandContext.CommandList)));
     
     // Create synchronization objects and wait until assets have been uploaded to the GPU.
-    
-    for(uint32_t CommandListIndex = 0; CommandListIndex < 2; ++ CommandListIndex)
-    {
-        ThrowIfFailed(Device->CreateFence(Synchronization[CommandListIndex].FenceValues[CurrentFrame], 
-                                          D3D12_FENCE_FLAG_NONE, 
-                                          IID_PPV_ARGS(&Synchronization[CommandListIndex].Fence)));
-        Synchronization[CommandListIndex].FenceValues[CurrentFrame]++;
-        
-        // Create an event handle to use for frame synchronization.
-        Synchronization[CommandListIndex].FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        if (Synchronization[CommandListIndex].FenceEvent == nullptr)
-        {
-            ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()));
-        }
-        
-        // Wait for the command list to execute; we are reusing the same command 
-        // list in our main loop but for now, we just want to wait for setup to 
-        // complete before continuing.
-        DX12WaitForCommandList(CommandListIndex);
-    }
+    InitCommandContextSynchronization(&Renderer->MainCommandContext);
+    InitCommandContextSynchronization(&Renderer->LoadingCommandContext);
 }
 
-
-//-----------------------------------------------------------------------------
-// The ray generation shader needs to access 2 resources: the raytracing output
-// and the top-level acceleration structure
-//
-ComPtr<ID3D12RootSignature> CreateRayGenSignature()
-{ 
-    nv_helpers_dx12::RootSignatureGenerator RootSignatureGen; 
-    RootSignatureGen.AddHeapRangesParameter({
-                                                {
-                                                    0 /*u0*/, 
-                                                    1 /*1 descriptor */, 
-                                                    0 /*use the implicit register space 0*/, 
-                                                    D3D12_DESCRIPTOR_RANGE_TYPE_UAV /* UAV representing the output buffer*/, 
-                                                    0 /*heap slot where the UAV is defined*/
-                                                }, 
-                                                {
-                                                    0 /*t0*/, 
-                                                    1, 
-                                                    0, 
-                                                    D3D12_DESCRIPTOR_RANGE_TYPE_SRV /*Top-level acceleration structure*/, 
-                                                    1
-                                                }
-                                            });
-    return RootSignatureGen.Generate(Device.Get(), true);
-}
-
-//-----------------------------------------------------------------------------
-// The hit shader communicates only through the ray payload, and therefore does
-// not require any resources
-//
-ComPtr<ID3D12RootSignature> CreateMissSignature()
-{ 
-    nv_helpers_dx12::RootSignatureGenerator RootSignatureGen; 
-    return RootSignatureGen.Generate(Device.Get(), true);
-}
-
-//-----------------------------------------------------------------------------
-// The miss shader communicates only through the ray payload, and therefore
-// does not require any resources
-//
-ComPtr<ID3D12RootSignature> CreateHitSignature()
-{ 
-    nv_helpers_dx12::RootSignatureGenerator RootSignatureGen; 
-    RootSignatureGen.AddRootParameter(D3D12_ROOT_PARAMETER_TYPE_SRV);
-    return RootSignatureGen.Generate(Device.Get(), true);
-}
-
-//-----------------------------------------------------------------------------
-//
-// The raytracing pipeline binds the shader code, root signatures and pipeline
-// characteristics in a single structure used by DXR to invoke the shaders and
-// manage temporary memory during raytracing
-//
-//
-void CreateRaytracingPipeline()
-{ 
-    nv_helpers_dx12::RayTracingPipelineGenerator Pipeline(Device.Get()); 
-    // The pipeline contains the DXIL code of all the shaders potentially executed 
-    // during the raytracing process. This section compiles the HLSL code into a 
-    // set of DXIL libraries. We chose to separate the code in several libraries 
-    // by semantic (ray generation, hit, miss) for clarity. Any code layout can be 
-    // used. 
-    Raytracing.RayGenLibrary = nv_helpers_dx12::CompileShaderLibrary(L"resources/shaders/raytracing/RayGen.hlsl"); 
-    Raytracing.MissLibrary = nv_helpers_dx12::CompileShaderLibrary(L"resources/shaders/raytracing/Miss.hlsl"); 
-    Raytracing.HitLibrary = nv_helpers_dx12::CompileShaderLibrary(L"resources/shaders/raytracing/Hit.hlsl");
-    
-    
-    Pipeline.AddLibrary(Raytracing.RayGenLibrary.Get(), {L"RayGen"});
-    Pipeline.AddLibrary(Raytracing.MissLibrary.Get(), {L"Miss"});
-    Pipeline.AddLibrary(Raytracing.HitLibrary.Get(), {L"ClosestHit"});
-    
-    Pipeline.AddHitGroup(L"HitGroup", L"ClosestHit");
-    
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // As described at the beginning of this section, to each shader corresponds a root signature defining
-    // its external inputs.
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
-    // To be used, each DX12 shader needs a root signature defining which 
-    // parameters and buffers will be accessed. 
-    Raytracing.RayGenSignature = CreateRayGenSignature(); 
-    Raytracing.MissSignature = CreateMissSignature(); 
-    Raytracing.HitSignature = CreateHitSignature();
-    
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
-    // To be used, each shader needs to be associated to its root signature. A shaders imported from the DXIL libraries needs to be associated with exactly one root signature. The shaders comprising the hit groups need to share the same root signature, which is associated to the hit group (and not to the shaders themselves). Note that a shader does not have to actually access all the resources declared in its root signature, as long as the root signature defines a superset of the resources the shader needs.
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
-    // The following section associates the root signature to each shader. Note 
-    // that we can explicitly show that some shaders share the same root signature 
-    // (eg. Miss and ShadowMiss). Note that the hit shaders are now only referred 
-    // to as hit groups, meaning that the underlying intersection, any-hit and 
-    // closest-hit shaders share the same root signature. 
-    Pipeline.AddRootSignatureAssociation(Raytracing.RayGenSignature.Get(), {L"RayGen"}); 
-    Pipeline.AddRootSignatureAssociation(Raytracing.MissSignature.Get(), {L"Miss"}); 
-    Pipeline.AddRootSignatureAssociation(Raytracing.HitSignature.Get(), {L"HitGroup"});
-    
-    Pipeline.SetMaxPayloadSize(4 * sizeof(float)); // RGB + distance
-    
-    Pipeline.SetMaxAttributeSize(2 * sizeof(float)); // barycentric coordinates
-    
-    Pipeline.SetMaxRecursionDepth(1);
-    
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // The pipeline now has all the information it needs. We generate the pipeline by calling the `Generate`
-    // method of the helper, which creates the array of subobjects and calls
-    // `ID3D12Device5::CreateStateObject`.
-    Raytracing.StateObject = Pipeline.Generate();
-    Raytracing.StateObject->QueryInterface(IID_PPV_ARGS(&Raytracing.StateObjectProps)); 
-}
-
-//-----------------------------------------------------------------------------
-//
-// Allocate the buffer holding the raytracing output, with the same size as the
-// output image
-//
-void CreateRaytracingOutputBuffer(win32_window_dimension Dimension)
-{ 
-    D3D12_RESOURCE_DESC ResDesc = {}; 
-    ResDesc.DepthOrArraySize = 1; 
-    ResDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; 
-    // The backbuffer is actually DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, but sRGB 
-    // formats cannot be used with UAVs. For accuracy we should convert to sRGB 
-    // ourselves in the shader 
-    ResDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; 
-    ResDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS; 
-    ResDesc.Width = Dimension.Width; 
-    ResDesc.Height = Dimension.Height; 
-    ResDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN; 
-    ResDesc.MipLevels = 1; 
-    ResDesc.SampleDesc.Count = 1; 
-    ThrowIfFailed(Device->CreateCommittedResource(&nv_helpers_dx12::kDefaultHeapProps,
-                                                  D3D12_HEAP_FLAG_NONE,
-                                                  &ResDesc,
-                                                  D3D12_RESOURCE_STATE_COPY_SOURCE,
-                                                  nullptr,
-                                                  IID_PPV_ARGS(&Raytracing.OutputResource)));
-}
-
-//-----------------------------------------------------------------------------
-//
-// Create the main heap used by the shaders, which will give access to the
-// raytracing output and the top-level acceleration structure
-//
-void CreateShaderResourceHeap()
-{ 
-    // Create a SRV/UAV/CBV descriptor heap. We need 2 entries - 1 UAV for the 
-    // raytracing output and 1 SRV for the TLAS 
-    Raytracing.SrvUavHeap = nv_helpers_dx12::CreateDescriptorHeap(Device.Get(), 
-                                                                  2, 
-                                                                  D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 
-                                                                  true); 
-    
-    // Get a handle to the heap memory on the CPU side, to be able to write the 
-    // descriptors directly 
-    D3D12_CPU_DESCRIPTOR_HANDLE SrvHandle = Raytracing.SrvUavHeap->GetCPUDescriptorHandleForHeapStart(); 
-    
-    // Create the UAV. Based on the root signature we created it is the first 
-    // entry. The Create*View methods write the view information directly into 
-    // srvHandle 
-    D3D12_UNORDERED_ACCESS_VIEW_DESC UavDesc = {}; 
-    UavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D; 
-    Device->CreateUnorderedAccessView(Raytracing.OutputResource.Get(), 
-                                      nullptr, 
-                                      &UavDesc, 
-                                      SrvHandle); 
-    
-    // Add the Top Level AS SRV right after the raytracing output buffer 
-    SrvHandle.ptr += Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); 
-    D3D12_SHADER_RESOURCE_VIEW_DESC SrvDesc; 
-    SrvDesc.Format = DXGI_FORMAT_UNKNOWN; 
-    SrvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE; 
-    SrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; 
-    SrvDesc.RaytracingAccelerationStructure.Location = Raytracing.TopLevelASBuffers.Result->GetGPUVirtualAddress(); 
-    
-    // Write the acceleration structure view in the heap 
-    Device->CreateShaderResourceView(nullptr, &SrvDesc, SrvHandle);
-}
-
-//-----------------------------------------------------------------------------
-//
-// The Shader Binding Table (SBT) is the cornerstone of the raytracing setup:
-// this is where the shader resources are bound to the shaders, in a way that
-// can be interpreted by the raytracer on GPU. In terms of layout, the SBT
-// contains a series of shader IDs with their resource pointers. The SBT
-// contains the ray generation shader, the miss shaders, then the hit groups.
-// Using the helper class, those can be specified in arbitrary order.
-//
-void CreateShaderBindingTable() 
-{ 
-    // The SBT helper class collects calls to Add*Program. If called several 
-    // times, the helper must be emptied before re-adding shaders. 
-    Raytracing.SbtHelper.Reset(); 
-    // The pointer to the beginning of the heap is the only parameter required by 
-    // shaders without root parameters 
-    D3D12_GPU_DESCRIPTOR_HANDLE SrvUavHeapHandle = Raytracing.SrvUavHeap->GetGPUDescriptorHandleForHeapStart();
-    uint64_t* HeapPointer = reinterpret_cast<uint64_t*>(SrvUavHeapHandle.ptr);
-    
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // We can now add the various programs used in our example: according to its root signature, the ray generation shader needs to access
-    // the raytracing output buffer and the top-level acceleration structure referenced in the heap. Therefore, it
-    // takes a single resource pointer towards the beginning of the heap data. The miss shader and the hit group
-    // only communicate through the ray payload, and do not require any resource, hence an empty resource array.
-    // Note that the helper will group the shaders by types in the SBT, so it is possible to declare them in an
-    // arbitrary order. For example, miss programs can be added before or after ray generation programs without
-    // affecting the result.
-    // However, within a given type (say, the hit groups), the order in which they are added
-    // is important. It needs to correspond to the `InstanceContributionToHitGroupIndex` value used when adding
-    // instances to the top-level acceleration structure: for example, an instance having `InstanceContributionToHitGroupIndex==0`
-    // needs to have its hit group added first in the SBT.
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
-    
-    // The ray generation only uses heap data 
-    Raytracing.SbtHelper.AddRayGenerationProgram(L"RayGen", {HeapPointer}); 
-    
-    // The miss and hit shaders do not access any external resources: instead they 
-    // communicate their results through the ray payload 
-    Raytracing.SbtHelper.AddMissProgram(L"Miss", {}); 
-    
-    // Adding the triangle hit shader 
-    std::vector<void*> BuffersVirtualAddresses;
-    BuffersVirtualAddresses.reserve(VertexBuffers.size());
-    for(uint32_t i = 0; i < VertexBuffers.size(); ++i)
-    {
-        BuffersVirtualAddresses.push_back((void*)(VertexBuffers[i].MainBuffer->GetGPUVirtualAddress()));
-    }
-    Raytracing.SbtHelper.AddHitGroup(L"HitGroup", BuffersVirtualAddresses);
-    
-    // Create the SBT on the upload heap
-    uint32_t SbtSize = 0;
-    SbtSize = Raytracing.SbtHelper.ComputeSBTSize();
-    Raytracing.SbtStorage = nv_helpers_dx12::CreateBuffer(Device.Get(), SbtSize,
-                                                          D3D12_RESOURCE_FLAG_NONE, 
-                                                          D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                          nv_helpers_dx12::kUploadHeapProps);
-    Raytracing.SbtHelper.Generate(Raytracing.SbtStorage.Get(), Raytracing.StateObjectProps.Get());
-}
 void
-DX12InitRenderer(HWND Window, renderer_config* Config)
+DX12InitRenderer(HWND Window, renderer_config* Config, memory_area* RendererArea)
 {
-    SupportConfig = {};
-    SupportConfig.VSync = true;
+    Renderer = Allocate<dx12_renderer>(RendererArea);
+    Renderer->MemArea = RendererArea;
+    Renderer->SupportedConfig = {};
+    Renderer->SupportedConfig.VSync = true;
+    Renderer->SupportedConfig.UseImGUI = true;
+    Renderer->Raytracing = Allocate<raytracing_data>(RendererArea);
+    
+    Renderer->Meshes = AllocatePool<mesh, mesh>(RendererArea, 32);
+    Renderer->VertexBuffers = AllocatePool<dx12_vertex_buffer, vertex_buffer>(RendererArea, 32);
+    Renderer->IndexBuffers = AllocatePool<dx12_index_buffer, index_buffer>(RendererArea, 32);
+    Renderer->ConstBuffers = AllocatePool<dx12_const_buffer, const_buffer>(RendererArea, 32);
+    
     uint32_t DXGIFactoryFlags = 0;
 #if SABLUJO_INTERNAL
     ComPtr<ID3D12Debug> DebugController;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&DebugController))))
     {
         DebugController->EnableDebugLayer();
-        DXGIFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
         
         ComPtr<ID3D12Debug1> DebugController1;
         DebugController->QueryInterface(IID_PPV_ARGS(&DebugController1));
         DebugController1->SetEnableGPUBasedValidation(true);
+    }
+    ComPtr<IDXGIInfoQueue> InfoQueue;
+    if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&InfoQueue))))
+    {
+        DXGIFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
+        InfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, true);
+        InfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, true);
     }
 #endif
     ComPtr<IDXGIFactory7> Factory;
@@ -902,9 +491,8 @@ DX12InitRenderer(HWND Window, renderer_config* Config)
             continue;
         }
         
-        // Check to see whether the adapter supports Direct3D 12, but don't create the
-        // actual device yet.
-        if (SUCCEEDED(D3D12CreateDevice(HardwareAdapter.Get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&Device))))
+        // Check to see whether the adapter supports Direct3D 12
+        if (SUCCEEDED(D3D12CreateDevice(HardwareAdapter.Get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&Renderer->Device))))
         {
             break;
         }
@@ -912,18 +500,18 @@ DX12InitRenderer(HWND Window, renderer_config* Config)
     
     // Check Raytracing support;
     D3D12_FEATURE_DATA_D3D12_OPTIONS5 Options5 = {}; 
-    if(SUCCEEDED(Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &Options5, sizeof(Options5))))
+    if(SUCCEEDED(Renderer->Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &Options5, sizeof(Options5))))
     {
-        SupportConfig.UseRaytracing = Options5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_0;
+        Renderer->SupportedConfig.UseRaytracing = Options5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_0;
     }
     else
     {
-        SupportConfig.UseRaytracing = false;
+        Renderer->SupportedConfig.UseRaytracing = false;
     }
     
     if(Config->UseRaytracing)
     {
-        Config->UseRaytracing = SupportConfig.UseRaytracing;
+        Config->UseRaytracing = Renderer->SupportedConfig.UseRaytracing;
     }
     
     
@@ -931,7 +519,7 @@ DX12InitRenderer(HWND Window, renderer_config* Config)
     QueueDesc.Type     = D3D12_COMMAND_LIST_TYPE_DIRECT;
     QueueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
     QueueDesc.Flags    = D3D12_COMMAND_QUEUE_FLAG_NONE;
-    ThrowIfFailed(Device->CreateCommandQueue(&QueueDesc, IID_PPV_ARGS(&CommandQueue)));
+    ThrowIfFailed(Renderer->Device->CreateCommandQueue(&QueueDesc, IID_PPV_ARGS(&Renderer->CommandQueue)));
     
     ComPtr<IDXGISwapChain1> NewSwapChain;
     DXGI_SWAP_CHAIN_DESC1 SwapChainDesc = {};
@@ -941,7 +529,7 @@ DX12InitRenderer(HWND Window, renderer_config* Config)
     //SwapChainDesc.Stero = FALSE;
     SwapChainDesc.SampleDesc.Count = 1;
     SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    SwapChainDesc.BufferCount = FrameCount;
+    SwapChainDesc.BufferCount = Renderer->FrameCount;
     //SwapChainDesc.Scaling = DXGI_SCALING_STRETCH;
     SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     //SwapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
@@ -957,11 +545,13 @@ DX12InitRenderer(HWND Window, renderer_config* Config)
         HRESULT HR = CreateDXGIFactory1(IID_PPV_ARGS(&Factory6));
         if (SUCCEEDED(HR))
         {
-            HR = Factory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &SupportConfig.AllowTearing, sizeof(SupportConfig.AllowTearing));
+            HR = Factory6->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, 
+                                               &Renderer->SupportedConfig.AllowTearing, 
+                                               sizeof(Renderer->SupportedConfig.AllowTearing));
         }
         if (Config->AllowTearing)
         {
-            Config->AllowTearing = SupportConfig.AllowTearing;
+            Config->AllowTearing = Renderer->SupportedConfig.AllowTearing;
         }
         if (Config->AllowTearing)
         {
@@ -970,153 +560,171 @@ DX12InitRenderer(HWND Window, renderer_config* Config)
         }
     }
     
-    ThrowIfFailed(Factory->CreateSwapChainForHwnd(CommandQueue.Get(), 
+    ThrowIfFailed(Factory->CreateSwapChainForHwnd(Renderer->CommandQueue.Get(), 
                                                   Window, 
                                                   &SwapChainDesc, 
                                                   nullptr, 
                                                   nullptr, 
                                                   &NewSwapChain));
     
-    ThrowIfFailed(NewSwapChain.As(&SwapChain));
+    ThrowIfFailed(NewSwapChain.As(&Renderer->SwapChain));
+    Renderer->CurrentFrame = Renderer->SwapChain->GetCurrentBackBufferIndex();
     
-    CurrentFrame = SwapChain->GetCurrentBackBufferIndex();
-    
-#if 0
-    // Setup our software backbuffer
-    D3D12_HEAP_PROPERTIES UploadHeapProperties = {};
-    UploadHeapProperties.Type = D3D12_HEAP_TYPE_UPLOAD;
-    
-    D3D12_RESOURCE_DESC BackBufferDesc = {};
-    BackBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    //BackBufferDesc.Alignment = 0;
-    BackBufferDesc.Width = SwapChainDesc.Width;
-    BackBufferDesc.Height = SwapChainDesc.Height;
-    BackBufferDesc.DepthOrArraySize = 1;
-    BackBufferDesc.MipLevels = 1;
-    BackBufferDesc.Format = SwapChainDesc.Format;
-    BackBufferDesc.SampleDesc.Count = SwapChainDesc.SampleDesc.Count;
-    BackBufferDesc.SampleDesc.Quality = SwapChainDesc.SampleDesc.Quality;
-    BackBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    BackBufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-    
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT Layout;
-    Device->GetCopyableFootprints(&BackBufferDesc, 0, 1, 0, &Layout, nullptr, nullptr, nullptr);
-    BackBufferFootPrint = Layout.Footprint;
-    
-    Buffer.Width = (uint32_t)BackBufferDesc.Width;
-    Buffer.Height = BackBufferDesc.Height;
-    Buffer.Pitch = Layout.Footprint.RowPitch;
-    Buffer.BytesPerPixel = Buffer.Pitch / Buffer.Width;
-    
-    BackBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    BackBufferDesc.Width = Layout.Footprint.RowPitch * Layout.Footprint.Height;
-    BackBufferDesc.Height = 1;
-    BackBufferDesc.Format = DXGI_FORMAT_UNKNOWN;
-    ThrowIfFailed(Device->CreateCommittedResource(&UploadHeapProperties,
-                                                  D3D12_HEAP_FLAG_NONE,
-                                                  &BackBufferDesc,
-                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                  nullptr,
-                                                  IID_PPV_ARGS(&BackBuffer)));
-    
-    D3D12_RANGE ReadRange = {0, 0}; // We do not intend to read from this resource on the CPU.
-    ThrowIfFailed(BackBuffer->Map(0, &ReadRange, &Buffer.Memory));
-    
-#endif
-    
-    if (SupportConfig.UseRaytracing)
+    if (Renderer->SupportedConfig.UseRaytracing)
     {
         
         // Create the raytracing pipeline, associating the shader code to symbol names
         // and to their root signatures, and defining the amount of memory carried by
         // rays (ray payload)
-        CreateRaytracingPipeline(); // #DXR
+        CreateRaytracingPipeline(Renderer); // #DXR
         
         // Allocate the buffer storing the raytracing output, with the same dimensions
         // as the target image
-        CreateRaytracingOutputBuffer(Config->OutputDimensions); // #DXR
+        CreateRaytracingOutputBuffer(Renderer, Config->OutputDimensions); // #DXR
     }
     
-    Viewport.TopLeftX = 0;
-    Viewport.TopLeftY = 0;
-    Viewport.Width = (float)Config->OutputDimensions.Width;
-    Viewport.Height = (float)Config->OutputDimensions.Height;
-    Viewport.MinDepth = D3D12_MIN_DEPTH;
-    Viewport.MaxDepth = D3D12_MAX_DEPTH;
+    Renderer->Viewport.TopLeftX = 0;
+    Renderer->Viewport.TopLeftY = 0;
+    Renderer->Viewport.Width = (float)Config->OutputDimensions.Width;
+    Renderer->Viewport.Height = (float)Config->OutputDimensions.Height;
+    Renderer->Viewport.MinDepth = D3D12_MIN_DEPTH;
+    Renderer->Viewport.MaxDepth = D3D12_MAX_DEPTH;
     
-    ScissorRect.left = 0;
-    ScissorRect.top = 0;
-    ScissorRect.right = Config->OutputDimensions.Width;
-    ScissorRect.bottom = Config->OutputDimensions.Height;
+    Renderer->ScissorRect.left = 0;
+    Renderer->ScissorRect.top = 0;
+    Renderer->ScissorRect.right = Config->OutputDimensions.Width;
+    Renderer->ScissorRect.bottom = Config->OutputDimensions.Height;
     
     
     // Create descriptor heaps.
     // Describe and create a render target view (RTV) descriptor heap.
     D3D12_DESCRIPTOR_HEAP_DESC RTVHeapDesc = {};
     RTVHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    RTVHeapDesc.NumDescriptors = FrameCount;
+    RTVHeapDesc.NumDescriptors = Renderer->FrameCount;
     RTVHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-    ThrowIfFailed(Device->CreateDescriptorHeap(&RTVHeapDesc, IID_PPV_ARGS(&RTVHeap)));
+    ThrowIfFailed(Renderer->Device->CreateDescriptorHeap(&RTVHeapDesc, IID_PPV_ARGS(&Renderer->RTVHeap)));
     
     
     // Create frame resources.
-    uint32_t RTVDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    uint32_t RTVDescriptorSize = Renderer->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     
-    D3D12_CPU_DESCRIPTOR_HANDLE RTVHandle = RTVHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_CPU_DESCRIPTOR_HANDLE RTVHandle = Renderer->RTVHeap->GetCPUDescriptorHandleForHeapStart();
     // Create a RTV for each frame.
-    for (uint32_t n = 0; n < FrameCount; n++)
+    for (uint32_t n = 0; n < Renderer->FrameCount; n++)
     {
-        ThrowIfFailed(SwapChain->GetBuffer(n, IID_PPV_ARGS(&RenderTargets[n])));
-        Device->CreateRenderTargetView(RenderTargets[n].Get(), nullptr, RTVHandle);
+        ThrowIfFailed(Renderer->SwapChain->GetBuffer(n, IID_PPV_ARGS(&Renderer->RenderTargets[n])));
+        Renderer->Device->CreateRenderTargetView(Renderer->RenderTargets[n].Get(), nullptr, RTVHandle);
         RTVHandle.ptr += RTVDescriptorSize;
         
-        ThrowIfFailed(Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&CommandAllocators[n][0])));
-        ThrowIfFailed(Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&CommandAllocators[n][1])));
+        ThrowIfFailed(Renderer->Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Renderer->MainCommandContext.CommandAllocators[n])));
+        ThrowIfFailed(Renderer->Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Renderer->LoadingCommandContext.CommandAllocators[n])));
     }
     
-    VertexBuffers.reserve(255);
-    IndexBuffers.reserve(255);
+    if (Config->UseImGUI)
+    {
+        // ImGui Setup
+        /*
+        {
+            D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+            desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            desc.NumDescriptors = FrameCount;
+            desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+            desc.NodeMask = 1;
+            ThrowIfFailed(Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&ImGuiRtvDescHeap)));
+            
+            SIZE_T rtvDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+            D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = ImGuiRtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+            for (UINT i = 0; i < FrameCount; i++)
+            {
+                ImGuiRenderTargetDescriptors[i] = rtvHandle;
+                rtvHandle.ptr += rtvDescriptorSize;
+            }
+        }
+        */
+        
+        // Create the command list in a closed state
+        ThrowIfFailed(Renderer->Device->CreateCommandList1(0, 
+                                                           D3D12_COMMAND_LIST_TYPE_DIRECT, 
+                                                           D3D12_COMMAND_LIST_FLAG_NONE,
+                                                           IID_PPV_ARGS(&Renderer->ImGuiCommandContext.CommandList)));
+        
+        for(uint32_t n = 0; n < Renderer->FrameCount; ++n)
+        {
+            ThrowIfFailed(Renderer->Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Renderer->ImGuiCommandContext.CommandAllocators[n])));
+        }
+        InitCommandContextSynchronization(&Renderer->ImGuiCommandContext);
+        {
+            D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+            desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            desc.NumDescriptors = 1;
+            desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            ThrowIfFailed(Renderer->Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&Renderer->ImGuiSrvDescHeap)));
+        }
+        /*
+        for (UINT i = 0; i < FrameCount; i++)
+        {
+            SwapChain->GetBuffer(i, IID_PPV_ARGS(&ImGuiRenderTargetResources[i]));
+            Device->CreateRenderTargetView(ImGuiRenderTargetResources[i].Get(), NULL, ImGuiRenderTargetDescriptors[i]);
+        }
+        */
+        ImGui_ImplDX12_Init(Renderer->Device.Get(), Renderer->FrameCount,
+                            DXGI_FORMAT_B8G8R8A8_UNORM, Renderer->ImGuiSrvDescHeap.Get(),
+                            Renderer->ImGuiSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
+                            Renderer->ImGuiSrvDescHeap->GetGPUDescriptorHandleForHeapStart());
+    }
     DX12LoadAssets();
+    Renderer->MVPBuffer = DX12CreateConstBuffer(sizeof(XMMATRIX) * 3);
 }
 
 void 
-DX12SetViewProjection(float* ViewProjection)
+DX12SetViewProjection(float* View, float* Projection)
 {
-    CurrentViewProjection = XMMATRIX(ViewProjection);
+    XMMATRIX ProjectionMat = XMMATRIX(Projection);
+    XMMATRIX Matrices[3];
+    Matrices[0] = XMMATRIX(View);
+    Matrices[1] = XMMatrixInverse(nullptr, Matrices[0]);
+    Matrices[2] = XMMatrixInverse(nullptr, ProjectionMat);
+    Matrices[0] = Matrices[0] * ProjectionMat;
+    DX12UpdateConstBuffer(Renderer->MVPBuffer, Matrices, sizeof(float) * 48);
+    //Renderer->CurrentViewProjection = XMMATRIX(ViewProjection);
 }
 
 void
-DX12SubmitForRender(mesh_handle Mesh)
+DX12SubmitForRender(mesh_instance MeshInstance)
 {
-    RenderList.push(Mesh);
+    Renderer->RenderList.push(MeshInstance);
 }
 
 void
 DX12Render(renderer_config Config)
 {
-    ThrowIfFailed(LoadingCommandList->Close());
+    ThrowIfFailed(Renderer->LoadingCommandContext.CommandList->Close());
     
     // Execute the loading command list.
-    ID3D12CommandList* ppLoadingCommandLists[] = { LoadingCommandList.Get() };
-    CommandQueue->ExecuteCommandLists(_countof(ppLoadingCommandLists), ppLoadingCommandLists);
+    ID3D12CommandList* ppLoadingCommandLists[] = { Renderer->LoadingCommandContext.CommandList.Get() };
+    Renderer->CommandQueue->ExecuteCommandLists(_countof(ppLoadingCommandLists), ppLoadingCommandLists);
     
     // Command list allocators can only be reset when the associated 
     // command lists have finished execution on the GPU; apps should use 
     // fences to determine GPU execution progress.
-    ThrowIfFailed(CommandAllocators[CurrentFrame][1]->Reset());
+    ThrowIfFailed(Renderer->MainCommandContext.CommandAllocators[Renderer->CurrentFrame]->Reset());
     
     // However, when ExecuteCommandList() is called on a particular command 
     // list, that command list can then be reset at any time and must be before 
     // re-recording.
-    ThrowIfFailed(CommandList->Reset(CommandAllocators[CurrentFrame][1].Get(), PipelineState.Get()));
+    ThrowIfFailed(Renderer->MainCommandContext.CommandList->Reset(Renderer->MainCommandContext.CommandAllocators[Renderer->CurrentFrame].Get(), 
+                                                                  Renderer->PipelineState.Get()));
+    
+    ComPtr<ID3D12GraphicsCommandList4> GraphicsCommandList4;
+    ThrowIfFailed(Renderer->MainCommandContext.CommandList.As(&GraphicsCommandList4));
     
     if(Config.UseRaytracing)
     {
-        if(!Raytracing.BottomLevelAS)
+        if(!Renderer->Raytracing->BottomLevelAS)
         {
             // Setup the acceleration structures (AS) for raytracing. When setting up 
             // geometry, each bottom-level AS has its own transform matrix. 
-            CreateAccelerationStructures(); 
+            CreateAccelerationStructures(Renderer); 
             
             // Command lists are created in the recording state, but there is 
             // nothing to record yet. The main loop expects it to be closed, so 
@@ -1126,58 +734,58 @@ DX12Render(renderer_config Config)
             // Create the buffer containing the raytracing result (always output in a
             // UAV), and create the heap referencing the resources used by the raytracing,
             // such as the acceleration structure
-            CreateShaderResourceHeap(); // #DXR
+            CreateShaderResourceHeap(Renderer); // #DXR
             
             // Create the shader binding table and indicating which shaders
             // are invoked for each instance in the AS
-            CreateShaderBindingTable();
+            CreateShaderBindingTable(Renderer);
         }
         
         // Bind the raytracing pipeline
-        CommandList->SetPipelineState1(Raytracing.StateObject.Get());
+        GraphicsCommandList4->SetPipelineState1(Renderer->Raytracing->StateObject.Get());
     }
     else
     {
         // Set necessary state.
-        CommandList->SetGraphicsRootSignature(RootSignature.Get());
+        Renderer->MainCommandContext.CommandList->SetGraphicsRootSignature(Renderer->RootSignature.Get());
     }
     
-    CommandList->RSSetViewports(1, &Viewport);
-    CommandList->RSSetScissorRects(1, &ScissorRect);
+    Renderer->MainCommandContext.CommandList->RSSetViewports(1, &Renderer->Viewport);
+    Renderer->MainCommandContext.CommandList->RSSetScissorRects(1, &Renderer->ScissorRect);
     
     // Indicate that the back buffer will be used as a render target.
     D3D12_RESOURCE_BARRIER Barrier = {};
     Barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     Barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-    Barrier.Transition.pResource = RenderTargets[CurrentFrame].Get();
+    Barrier.Transition.pResource = Renderer->RenderTargets[Renderer->CurrentFrame].Get();
     Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
     Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
     Barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     
-    CommandList->ResourceBarrier(1, &Barrier);
+    Renderer->MainCommandContext.CommandList->ResourceBarrier(1, &Barrier);
     
-    uint32_t RTVDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-    D3D12_CPU_DESCRIPTOR_HANDLE RTVHandle = RTVHeap->GetCPUDescriptorHandleForHeapStart();
-    RTVHandle.ptr += CurrentFrame * RTVDescriptorSize;
+    uint32_t RTVDescriptorSize = Renderer->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    D3D12_CPU_DESCRIPTOR_HANDLE RTVHandle = Renderer->RTVHeap->GetCPUDescriptorHandleForHeapStart();
+    RTVHandle.ptr += Renderer->CurrentFrame * RTVDescriptorSize;
     
-    CommandList->OMSetRenderTargets(1, &RTVHandle, FALSE, nullptr);
+    Renderer->MainCommandContext.CommandList->OMSetRenderTargets(1, &RTVHandle, FALSE, nullptr);
     
     // Record commands
-    if(Config.UseRaytracing && SupportConfig.UseRaytracing)
+    if(Config.UseRaytracing && Renderer->SupportedConfig.UseRaytracing)
     {
         // #DXR
         // Bind the descriptor heap giving access to the top-level acceleration
         // structure, as well as the raytracing output
-        std::vector<ID3D12DescriptorHeap*> Heaps = {Raytracing.SrvUavHeap.Get()};
-        CommandList->SetDescriptorHeaps((uint32_t)Heaps.size(), Heaps.data());
+        std::vector<ID3D12DescriptorHeap*> Heaps = {Renderer->Raytracing->SrvUavHeap.Get()};
+        Renderer->MainCommandContext.CommandList->SetDescriptorHeaps((uint32_t)Heaps.size(), Heaps.data());
         
         // On the last frame, the raytracing output was used as a copy source, to
         // copy its contents into the render target. Now we need to transition it to
         // a UAV so that the shaders can write in it.
-        Barrier.Transition.pResource = Raytracing.OutputResource.Get();
+        Barrier.Transition.pResource = Renderer->Raytracing->OutputResource.Get();
         Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
         Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        CommandList->ResourceBarrier(1, &Barrier);
+        Renderer->MainCommandContext.CommandList->ResourceBarrier(1, &Barrier);
         
         // Setup the raytracing task
         D3D12_DISPATCH_RAYS_DESC Desc = {};
@@ -1186,8 +794,8 @@ DX12Render(renderer_config Config)
         // all SBT entries of a given type have the same size to allow a fixed stride.
         // The ray generation shaders are always at the beginning of the SBT.
         
-        uint32_t RayGenerationSectionSizeInBytes = Raytracing.SbtHelper.GetRayGenSectionSize();
-        Desc.RayGenerationShaderRecord.StartAddress = Raytracing.SbtStorage->GetGPUVirtualAddress();
+        uint32_t RayGenerationSectionSizeInBytes = Renderer->Raytracing->SbtHelper.GetRayGenSectionSize();
+        Desc.RayGenerationShaderRecord.StartAddress = Renderer->Raytracing->SbtStorage->GetGPUVirtualAddress();
         Desc.RayGenerationShaderRecord.SizeInBytes = RayGenerationSectionSizeInBytes;
         
         // The miss shaders are in the second SBT section, right after the ray
@@ -1195,17 +803,17 @@ DX12Render(renderer_config Config)
         // for the shadow rays, so this section has a size of 2*m_sbtEntrySize. We
         // also indicate the stride between the two miss shaders, which is the size
         // of a SBT entry
-        uint32_t MissSectionSizeInBytes = Raytracing.SbtHelper.GetMissSectionSize();
-        Desc.MissShaderTable.StartAddress = Raytracing.SbtStorage->GetGPUVirtualAddress() + RayGenerationSectionSizeInBytes;
+        uint32_t MissSectionSizeInBytes = Renderer->Raytracing->SbtHelper.GetMissSectionSize();
+        Desc.MissShaderTable.StartAddress = Renderer->Raytracing->SbtStorage->GetGPUVirtualAddress() + RayGenerationSectionSizeInBytes;
         Desc.MissShaderTable.SizeInBytes = MissSectionSizeInBytes;
-        Desc.MissShaderTable.StrideInBytes = Raytracing.SbtHelper.GetMissEntrySize();
+        Desc.MissShaderTable.StrideInBytes = Renderer->Raytracing->SbtHelper.GetMissEntrySize();
         
         // The hit groups section start after the miss shaders. In this sample we
         // have one 1 hit group for the triangle
-        uint32_t HitGroupsSectionSize = Raytracing.SbtHelper.GetHitGroupSectionSize();
-        Desc.HitGroupTable.StartAddress = Raytracing.SbtStorage->GetGPUVirtualAddress() + RayGenerationSectionSizeInBytes + MissSectionSizeInBytes;
+        uint32_t HitGroupsSectionSize = Renderer->Raytracing->SbtHelper.GetHitGroupSectionSize();
+        Desc.HitGroupTable.StartAddress = Renderer->Raytracing->SbtStorage->GetGPUVirtualAddress() + RayGenerationSectionSizeInBytes + MissSectionSizeInBytes;
         Desc.HitGroupTable.SizeInBytes = HitGroupsSectionSize;
-        Desc.HitGroupTable.StrideInBytes = Raytracing.SbtHelper.GetHitGroupEntrySize();
+        Desc.HitGroupTable.StrideInBytes = Renderer->Raytracing->SbtHelper.GetHitGroupEntrySize();
         
         // Dimensions of the image to render, identical to a kernel launch dimension
         //TODO: Get the window dimensions here
@@ -1214,56 +822,61 @@ DX12Render(renderer_config Config)
         Desc.Depth = 1;
         
         // Dispatch the rays and write to the raytracing output
-        CommandList->DispatchRays(&Desc);
+        GraphicsCommandList4->DispatchRays(&Desc);
         
         // The raytracing output needs to be copied to the actual render target used
         // for display. For this, we need to transition the raytracing output from a
         // UAV to a copy source, and the render target buffer to a copy destination.
         // We can then do the actual copy, before transitioning the render target
         // buffer into a render target, that will be then used to display the image
-        Barrier.Transition.pResource = Raytracing.OutputResource.Get();
+        Barrier.Transition.pResource = Renderer->Raytracing->OutputResource.Get();
         Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-        CommandList->ResourceBarrier(1, &Barrier);
+        Renderer->MainCommandContext.CommandList->ResourceBarrier(1, &Barrier);
         
-        Barrier.Transition.pResource = RenderTargets[CurrentFrame].Get();
+        Barrier.Transition.pResource = Renderer->RenderTargets[Renderer->CurrentFrame].Get();
         Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
         Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-        CommandList->ResourceBarrier(1, &Barrier);
+        Renderer->MainCommandContext.CommandList->ResourceBarrier(1, &Barrier);
         
-        CommandList->CopyResource(RenderTargets[CurrentFrame].Get(), Raytracing.OutputResource.Get());
+        Renderer->MainCommandContext.CommandList->CopyResource(Renderer->RenderTargets[Renderer->CurrentFrame].Get(), 
+                                                               Renderer->Raytracing->OutputResource.Get());
         
-        Barrier.Transition.pResource = RenderTargets[CurrentFrame].Get();
+        Barrier.Transition.pResource = Renderer->RenderTargets[Renderer->CurrentFrame].Get();
         Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
         Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        CommandList->ResourceBarrier(1, &Barrier);
+        Renderer->MainCommandContext.CommandList->ResourceBarrier(1, &Barrier);
         
-        RenderList = std::queue<mesh_handle>();
+        Renderer->RenderList = std::queue<mesh_instance>();
     }
     else
     {
         float ClearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
-        CommandList->ClearRenderTargetView(RTVHandle, ClearColor, 0, nullptr);
+        Renderer->MainCommandContext.CommandList->ClearRenderTargetView(RTVHandle, ClearColor, 0, nullptr);
         
         // Set Camera
-        XMMATRIX Model = XMMatrixIdentity();
-        //XMMATRIX Model = XMMatrixTranslation(0.0f, 0.0f, -10.0f);
-        CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &Model, 0);
-        CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &CurrentViewProjection, sizeof(XMMATRIX) / 4);
+        //Renderer->MainCommandContext.CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &Renderer->CurrentViewProjection, sizeof(XMMATRIX) / 4);
+        // #DXR Extra: Perspective Camera 
+        dx12_const_buffer* MVPBuffer = GetPoolInstance(&Renderer->ConstBuffers, Renderer->MVPBuffer);
+        std::vector<ID3D12DescriptorHeap*> Heaps = { MVPBuffer->Heap.Get() }; 
+        Renderer->MainCommandContext.CommandList->SetDescriptorHeaps((uint32_t)Heaps.size(), Heaps.data()); 
+        // set the root descriptor table 0 to the constant buffer descriptor heap 
+        Renderer->MainCommandContext.CommandList->SetGraphicsRootDescriptorTable(1, MVPBuffer->Heap->GetGPUDescriptorHandleForHeapStart());
         
-        CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         
-        while(!RenderList.empty())
+        Renderer->MainCommandContext.CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        
+        while(!Renderer->RenderList.empty())
         {
-            const mesh_handle MeshHandle = RenderList.front();
-            const uint8_t VertexBuffIndex = MeshHandle >> 8;
-            const uint8_t IndexBuffIndex = MeshHandle & 0xFF;
-            const vertex_buffer& VertexBuffer = VertexBuffers[VertexBuffIndex];
-            const index_buffer& IndexBuffer = IndexBuffers[IndexBuffIndex];
-            CommandList->IASetVertexBuffers(0, 1, &VertexBuffer.BufferView);
-            CommandList->IASetIndexBuffer(&IndexBuffer.BufferView);
-            CommandList->DrawIndexedInstanced(IndexBuffer.IndexCount, 1, 0, 0, 0);
-            RenderList.pop();
+            mesh_instance MeshInstance = Renderer->RenderList.front();
+            Renderer->MainCommandContext.CommandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &MeshInstance.Transform, 0);
+            mesh* Mesh = GetPoolInstance(&Renderer->Meshes, MeshInstance.Mesh);
+            dx12_vertex_buffer* VertexBuffer = GetPoolInstance(&Renderer->VertexBuffers, Mesh->VertexBuffer);
+            dx12_index_buffer* IndexBuffer = GetPoolInstance(&Renderer->IndexBuffers, Mesh->IndexBuffer);
+            Renderer->MainCommandContext.CommandList->IASetVertexBuffers(0, 1, &VertexBuffer->BufferView);
+            Renderer->MainCommandContext.CommandList->IASetIndexBuffer(&IndexBuffer->BufferView);
+            Renderer->MainCommandContext.CommandList->DrawIndexedInstanced(IndexBuffer->IndexCount, 1, 0, 0, 0);
+            Renderer->RenderList.pop();
         }
     }
     
@@ -1271,13 +884,36 @@ DX12Render(renderer_config Config)
     Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     // Indicate that the back buffer will now be used to present.
     Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-    CommandList->ResourceBarrier(1, &Barrier);
+    if(!Config.UseImGUI)
+    {
+        Renderer->MainCommandContext.CommandList->ResourceBarrier(1, &Barrier);
+    }
     
-    ThrowIfFailed(CommandList->Close());
-    
+    ThrowIfFailed(Renderer->MainCommandContext.CommandList->Close());
     // Execute the command list.
-    ID3D12CommandList* ppCommandLists[] = { CommandList.Get() };
-    CommandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+    std::vector<ID3D12CommandList*> CommandLists = {{ Renderer->MainCommandContext.CommandList.Get() }};
+    if (Config.UseImGUI)
+    {
+        ThrowIfFailed(Renderer->ImGuiCommandContext.CommandList->Reset(Renderer->ImGuiCommandContext.CommandAllocators[Renderer->CurrentFrame].Get(), nullptr));
+        /*
+float ClearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
+        ImGuiCommandList->ClearRenderTargetView(RTVHandle, ClearColor, 0, nullptr);
+        uint32_t RTVDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        D3D12_CPU_DESCRIPTOR_HANDLE RTVHandle = RTVHeap->GetCPUDescriptorHandleForHeapStart();
+        RTVHandle.ptr += CurrentFrame * RTVDescriptorSize;
+*/
+        Renderer->ImGuiCommandContext.CommandList->OMSetRenderTargets(1, &RTVHandle, FALSE, nullptr);
+        std::vector<ID3D12DescriptorHeap*> Heaps = {Renderer->ImGuiSrvDescHeap.Get()};
+        Renderer->ImGuiCommandContext.CommandList->SetDescriptorHeaps((uint32_t)Heaps.size(), Heaps.data());
+        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), Renderer->ImGuiCommandContext.CommandList.Get());
+        
+        Renderer->ImGuiCommandContext.CommandList->ResourceBarrier(1, &Barrier);
+        ThrowIfFailed(Renderer->ImGuiCommandContext.CommandList->Close());
+        CommandLists.push_back(Renderer->ImGuiCommandContext.CommandList.Get());
+    }
+    
+    
+    Renderer->CommandQueue->ExecuteCommandLists((uint32_t)CommandLists.size(), CommandLists.data());
 }
 
 void
@@ -1285,43 +921,64 @@ DX12Present(renderer_config Config)
 {
     uint32_t SyncInterval = Config.VSync ? 1 : 0;
     uint32_t Flags = 0;
-    if(Config.AllowTearing && !Config.VSync && SupportConfig.AllowTearing)
+    if(Config.AllowTearing && !Config.VSync && Renderer->SupportedConfig.AllowTearing)
     {
         Flags |= DXGI_PRESENT_ALLOW_TEARING;
     }
     
-    ThrowIfFailed(SwapChain->Present(SyncInterval, Flags));
+    ThrowIfFailed(Renderer->SwapChain->Present(SyncInterval, Flags));
     
     // Schedule a Signal command in the queue.
-    const uint32_t GraphicsCommandList = 1;
-    uint64_t CurrentFenceValue = Synchronization[GraphicsCommandList].FenceValues[CurrentFrame];
-    ThrowIfFailed(CommandQueue->Signal(Synchronization[GraphicsCommandList].Fence.Get(), CurrentFenceValue));
+    uint64_t CurrentFenceValue = Renderer->MainCommandContext.Synchronization.FenceValues[Renderer->CurrentFrame];
+    ThrowIfFailed(Renderer->CommandQueue->Signal(Renderer->MainCommandContext.Synchronization.Fence.Get(), CurrentFenceValue));
     
     // Update the frame index.
-    CurrentFrame = SwapChain->GetCurrentBackBufferIndex();
+    Renderer->CurrentFrame = Renderer->SwapChain->GetCurrentBackBufferIndex();
     
     // If the next frame is not ready to be rendered yet, wait until it is ready.
-    if (Synchronization[GraphicsCommandList].Fence->GetCompletedValue() < Synchronization[GraphicsCommandList].FenceValues[CurrentFrame])
+    if (Renderer->MainCommandContext.Synchronization.Fence->GetCompletedValue() < Renderer->MainCommandContext.Synchronization.FenceValues[Renderer->CurrentFrame])
     {
-        ThrowIfFailed(Synchronization[GraphicsCommandList].Fence->SetEventOnCompletion(Synchronization[GraphicsCommandList].FenceValues[CurrentFrame], Synchronization[GraphicsCommandList].FenceEvent));
-        WaitForSingleObjectEx(Synchronization[GraphicsCommandList].FenceEvent, INFINITE, FALSE);
+        ThrowIfFailed(Renderer->MainCommandContext.Synchronization.Fence->SetEventOnCompletion(Renderer->MainCommandContext.Synchronization.FenceValues[Renderer->CurrentFrame], 
+                                                                                               Renderer->MainCommandContext.Synchronization.FenceEvent));
+        WaitForSingleObjectEx(Renderer->MainCommandContext.Synchronization.FenceEvent, INFINITE, FALSE);
     }
     
     // Set the fence value for the next frame.
-    Synchronization[GraphicsCommandList].FenceValues[CurrentFrame] = CurrentFenceValue + 1;
+    Renderer->MainCommandContext.Synchronization.FenceValues[Renderer->CurrentFrame] = CurrentFenceValue + 1;
     
-    DX12WaitForCommandList(0);
-    ThrowIfFailed(CommandAllocators[CurrentFrame][0]->Reset());
-    ThrowIfFailed(LoadingCommandList->Reset(CommandAllocators[CurrentFrame][0].Get(), PipelineState.Get()));
+    // Wait and reset loading commands
+    DX12WaitForCommandContext(&Renderer->LoadingCommandContext);
+    ThrowIfFailed(Renderer->LoadingCommandContext.CommandAllocators[Renderer->CurrentFrame]->Reset());
+    ThrowIfFailed(Renderer->LoadingCommandContext.CommandList->Reset(Renderer->LoadingCommandContext.CommandAllocators[Renderer->CurrentFrame].Get(), 
+                                                                     Renderer->PipelineState.Get()));
 }
 
 void
-DX12ShutdownRenderer()
+DX12ShutdownRenderer(renderer_config Config)
 {
     // Ensure that the GPU is no longer referencing resources that are about to be
     // cleaned up by the destructor.
-    DX12WaitForCommandList(0);
-    CloseHandle(Synchronization[0].FenceEvent);
-    DX12WaitForCommandList(1);
-    CloseHandle(Synchronization[1].FenceEvent);
+    DX12WaitForCommandContext(&Renderer->LoadingCommandContext);
+    CloseHandle(Renderer->LoadingCommandContext.Synchronization.FenceEvent);
+    DX12WaitForCommandContext(&Renderer->MainCommandContext);
+    CloseHandle(Renderer->MainCommandContext.Synchronization.FenceEvent);
+    if (Config.UseImGUI)
+    {
+        DX12WaitForCommandContext(&Renderer->ImGuiCommandContext);
+        CloseHandle(Renderer->ImGuiCommandContext.Synchronization.FenceEvent);
+        ImGui_ImplDX12_Shutdown();
+    }
+    
+    Renderer->~dx12_renderer();
+    Renderer = nullptr;
+#if SABLUJO_INTERNAL
+    {
+        ComPtr<IDXGIDebug1> DXGIDebug;
+        if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&DXGIDebug))))
+        {
+            DXGIDebug->ReportLiveObjects(DXGI_DEBUG_ALL, 
+                                         DXGI_DEBUG_RLO_FLAGS(DXGI_DEBUG_RLO_SUMMARY | DXGI_DEBUG_RLO_IGNORE_INTERNAL));
+        }
+    }
+#endif
 }

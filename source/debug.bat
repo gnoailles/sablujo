@@ -1,2 +1,3 @@
 @echo off
-start "" "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\devenv.exe" ..\build\win32_sablujo.exe
+REM start "" "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\devenv.exe" ..\build\win32_sablujo.exe
+start "" "remedybg.exe" ..\build\debug.rdbg

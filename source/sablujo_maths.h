@@ -42,6 +42,12 @@ struct vector3
         __m128 vec;
     };
     
+    inline float  operator[](int32_t Index)
+    {
+        Assert(Index < 3);
+        return vec.m128_f32[Index];
+    }
+    
 };
 
 
@@ -123,6 +129,57 @@ inline float Tangent(float Value)
     return Result;
 }
 
+
+struct random_series
+{
+    uint32_t State;
+};
+
+internal uint32_t XorShift32(random_series* Series)
+{
+	uint32_t x = Series->State;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+    Series->State = x;
+    
+    return x;
+}
+
+internal float
+RandomUnilateral(random_series* Series)
+{
+    return (float)XorShift32(Series) / (float)UINT32_MAX;
+}
+
+internal float
+RandomBilateral(random_series* Series)
+{
+    return 2.0f * RandomUnilateral(Series) - 1.0f;
+}
+
+inline vector3 Min(vector3 A, vector3 B)
+{
+    return vector3{MIN(A.X, B.X), MIN(A.Y, B.Y), MIN(A.Z, B.Z), 0.0f};
+}
+
+inline vector3 Max(vector3 A, vector3 B)
+{
+    return vector3{MAX(A.X, B.X), MAX(A.Y, B.Y), MAX(A.Z, B.Z), 0.0f};
+}
+
+inline vector3 Min(vector3 A, float B)
+{
+    return vector3{MIN(A.X, B), MIN(A.Y, B), MIN(A.Z, B), 0.0f};
+}
+
+inline vector3 Max(vector3 A, float B)
+{
+    return vector3{MAX(A.X, B), MAX(A.Y, B), MAX(A.Z, B), 0.0f};
+}
+
+matrix4 LookAt(vector3 Eye, vector3 Target, vector3 Up);
+
 // IMPORTANT: Only use for affine transformation where points are sure to be set to w = 1 
 vector3 MultPointMatrix(matrix4* Matrix, vector3* Vector);
 vector4 MultPointMatrix(matrix4* Matrix, vector4* Vector);
@@ -135,6 +192,16 @@ matrix4 MultMatrixMatrixIntrinsics(matrix4* A, matrix4* B);
 matrix4 InverseMatrix(matrix4* Matrix);
 matrix4 TransposeMatrix(matrix4* Matrix);
 
+inline matrix4 GetIdentityMatrix()
+{
+    matrix4 Result = {};
+    Result.val[0][0] = 1.0f;
+    Result.val[1][1] = 1.0f;
+    Result.val[2][2] = 1.0f;
+    Result.val[3][3] = 1.0f;
+    return Result;
+}
+
 inline matrix4 GetXRotationMatrix(float AngleInRadians)
 {
     matrix4 Result = {};
@@ -145,8 +212,8 @@ inline matrix4 GetXRotationMatrix(float AngleInRadians)
     Result.val[2][2] = Cos;
     Result.val[3][3] = 1.0f;
     
-    Result.val[1][2] = -Sin;
-    Result.val[2][1] = Sin;
+    Result.val[1][2] = Sin;
+    Result.val[2][1] = -Sin;
     return Result;
 }
 
@@ -160,8 +227,8 @@ inline matrix4 GetYRotationMatrix(float AngleInRadians)
     Result.val[2][2] = Cos;
     Result.val[3][3] = 1.0f;
     
-    Result.val[0][2] = Sin;
-    Result.val[2][0] = -Sin;
+    Result.val[0][2] = -Sin;
+    Result.val[2][0] = Sin;
     return Result;
 }
 
@@ -176,13 +243,45 @@ inline matrix4 GetZRotationMatrix(float AngleInRadians)
     Result.val[2][2] = 1.0f;
     Result.val[3][3] = 1.0f;
     
-    Result.val[0][1] = -Sin;
-    Result.val[1][0] = Sin;
+    Result.val[0][1] = Sin;
+    Result.val[1][0] = -Sin;
+    return Result;
+}
+
+inline matrix4 GetTranslationMatrix(vector3 Translation)
+{
+    matrix4 Result = GetIdentityMatrix();
+    Result.val[3][0] = Translation.X;
+    Result.val[3][1] = Translation.Y;
+    Result.val[3][2] = Translation.Z;
     return Result;
 }
 
 // Vector 3
-// FUNCTIONS
+// OPERATORS
+inline vector3
+operator-(float lhs, vector3 rhs)
+{
+    vector3 Result;
+    Result.vec = _mm_sub_ps(_mm_set1_ps(lhs), rhs.vec);
+    return Result;
+}
+
+inline vector3
+operator-(vector3 rhs)
+{
+    vector3 Result;
+    Result.vec = _mm_sub_ps(_mm_setzero_ps(), rhs.vec);
+    return Result;
+}
+
+inline vector3
+operator-(vector3 lhs, vector3 rhs)
+{
+    vector3 Result;
+    Result.vec = _mm_sub_ps(lhs.vec, rhs.vec);
+    return Result;
+}
 
 inline vector3
 operator+(vector3 lhs, vector3 rhs)
@@ -192,12 +291,92 @@ operator+(vector3 lhs, vector3 rhs)
     return Result;
 }
 
+inline void
+operator+=(vector3& lhs, vector3 rhs)
+{
+    lhs.vec = _mm_add_ps(lhs.vec, rhs.vec);
+}
+
 inline vector3
 operator*(float lhs, vector3 rhs)
 {
     vector3 Result;
     Result.vec = _mm_mul_ps(_mm_set1_ps(lhs), rhs.vec);
     return Result;
+}
+
+inline vector3
+operator*(vector3 lhs, float rhs)
+{
+    vector3 Result;
+    Result.vec = _mm_mul_ps(_mm_set1_ps(rhs), lhs.vec);
+    return Result;
+}
+
+inline vector3
+operator/(vector3 lhs, float rhs)
+{
+    vector3 Result;
+    Result.vec = _mm_div_ps(lhs.vec, _mm_set1_ps(rhs));
+    return Result;
+}
+
+inline vector3
+operator/(float lhs, vector3 rhs)
+{
+    vector3 Result;
+    Result.vec = _mm_div_ps(_mm_set1_ps(lhs), rhs.vec);
+    return Result;
+}
+
+#if LANE_WIDTH != 1
+
+inline vector3
+operator*(vector3 lhs, vector3 rhs)
+{
+    vector3 Result;
+    Result.vec = _mm_mul_ps(lhs.vec, rhs.vec);
+    return Result;
+}
+
+inline float MagnitudeSq(vector3 A)
+{
+    return A.X * A.X + A.Y * A.Y + A.Z * A.Z;
+}
+
+inline float Magnitude(vector3 A)
+{
+    return SquareRoot(MagnitudeSq(A));
+}
+
+inline vector3 Normalize(vector3 A)
+{
+    vector3 Result;
+    Result = A / Magnitude(A);
+    return Result;
+}
+
+inline float
+DotProduct(vector3 A, vector3 B)
+{
+    return A.X *B.X + A.Y * B.Y + A.Z * B.Z;
+}
+
+#endif
+
+inline vector3
+CrossProduct(vector3 A, vector3 B)
+{
+    vector3 Result;
+    Result.X = A.Y *B.Z - A.Z * B.Y;
+    Result.Y = A.Z *B.X - A.X * B.Z;
+    Result.Z = A.X *B.Y - A.Y * B.X;
+    return Result;
+}
+
+inline vector3 Lerp(vector3 A, vector3 B, float t)
+{
+    return (1.0f-t)*A + t*B;
 }
 
 // Vector 4

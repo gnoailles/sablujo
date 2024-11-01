@@ -1,5 +1,26 @@
 #include "sablujo_maths.h"
 
+matrix4 LookAt(vector3 Eye, vector3 Target, vector3 Up)
+{
+    vector3 F = Normalize(Target - Eye);
+    vector3 S = Normalize(CrossProduct(Up, F));
+    vector3 U = CrossProduct(F, S);
+    
+    matrix4 Result = GetIdentityMatrix();
+    Result.val[0][0] = S.X;
+    Result.val[1][0] = S.Y;
+    Result.val[2][0] = S.Z;
+    Result.val[0][1] = U.X;
+    Result.val[1][1] = U.Y;
+    Result.val[2][1] = U.Z;
+    Result.val[0][2] = F.X;
+    Result.val[1][2] = F.Y;
+    Result.val[2][2] = F.Z;
+    Result.val[3][0] = -DotProduct(S, Eye);
+    Result.val[3][1] = -DotProduct(U, Eye);
+    Result.val[3][2] = -DotProduct(F, Eye);
+    return Result;
+}
 
 vector3 MultPointMatrix(matrix4* Matrix, vector3* Vector)
 {
@@ -62,7 +83,11 @@ matrix4 MultMatrixMatrix(matrix4* A, matrix4* B)
     {
         for(int32_t j = 0; j < 4; ++j)
         {
-            Result.val[i][j] = A->val[i][0] * B->val[0][j] + A->val[i][1] * B->val[1][j] + A->val[i][2] * B->val[2][j] + A->val[i][3] * B->val[3][j];
+            Result.val[j][i] = 
+                A->val[0][i] * B->val[j][0] + 
+                A->val[1][i] * B->val[j][1] + 
+                A->val[2][i] * B->val[j][2] + 
+                A->val[3][i] * B->val[j][3];
         }
     }
     return Result;

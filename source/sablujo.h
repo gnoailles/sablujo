@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "sablujo_defines.h"
 #include "sablujo_maths.h"
+#include "sablujo_memory.h"
 
 /////////////////////////
 // Platform abstraction
@@ -21,38 +22,13 @@ struct platform_calls
 #endif
 };
 
-#ifdef INVALID_HANDLE
-#undef INVALID_HANDLE
-#endif
+struct mesh; 
 
-/*
-#ifdef HANDLE
-#undef HANDLE
-#endif
-*/
-#if SABLUJO_INTERNAL
-struct mesh_handle
+struct mesh_instance
 {
-    uint16_t Handle = UINT16_MAX;
-    
-    operator uint16_t() const
-    {
-        return Handle;
-    }
+    handle<mesh> Mesh;
+    matrix4 Transform;
 };
-
-inline bool
-operator==(mesh_handle lhs, mesh_handle rhs)
-{
-    return lhs.Handle == rhs.Handle;
-}
-
-#define INVALID_HANDLE mesh_handle{UINT16_MAX}
-
-#else
-using mesh_handle = uint16_t;
-#endif
-
 
 struct camera
 {
@@ -63,15 +39,20 @@ struct camera
 };
 
 
-typedef mesh_handle create_vertex_buffer(float* Vertices, uint32_t* Indices, 
-                                         uint32_t VertexSize, uint32_t VerticesCount, uint32_t IndicesCount);
-typedef void set_view_projection(float* ViewProjection);
-typedef void submit_for_render(mesh_handle Mesh);
+typedef handle<mesh> create_vertex_buffer(float* Vertices, uint32_t* Indices, 
+                                          uint32_t VertexSize, uint32_t VerticesCount, uint32_t IndicesCount);
+typedef void set_view_projection(float* View, float* Projection);
+typedef void submit_for_render(mesh_instance MeshInstance);
 struct renderer_calls
 {
     create_vertex_buffer* CreateVertexBuffer;
     set_view_projection* SetViewProjection;
     submit_for_render* SubmitForRender;
+};
+
+struct inputs
+{
+    uint8_t KeyStates;
 };
 
 struct game_memory
@@ -81,6 +62,8 @@ struct game_memory
     void* PermanentStorage;
     void* TransientStorage;
     
+    float DeltaTime;
+    inputs Inputs;
     platform_calls Platform;
     renderer_calls Renderer;
 };
@@ -105,17 +88,6 @@ typedef void game_update_and_render(game_memory* Memory, viewport* Viewport);
 //////////////////
 // Game Specific
 //////////////////
-
-struct mesh
-{
-    vector3* Vertices;
-    vector3* Normals;
-    uint32_t* Indices;
-    uint32_t VerticesCount;
-    uint32_t IndicesCount;
-    matrix4 Transform;
-    matrix4 InverseTransform;
-};
 
 #define SPHERE_SUBDIV 28 
 #define SPHERE_VERTEX_COUNT (SPHERE_SUBDIV * SPHERE_SUBDIV + 2)
