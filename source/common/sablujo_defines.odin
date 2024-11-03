@@ -3,6 +3,9 @@ package sablujo_common
 SABLUJO_INTERNAL :: #config(INTERNAL, false)
 SABLUJO_SLOW :: #config(SLOW, false)
 
+
+LANE_WIDTH :: #config(LANE_WIDTH, 8)
+
 Kilobytes :: proc (value: $T) -> T { return (value)*1024 }
 Megabytes :: proc (value: $T) -> T { return Kilobytes(value)*1024 }
 Gigabytes :: proc (value: $T) -> T { return Megabytes(value)*1024 }
