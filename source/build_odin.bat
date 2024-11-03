@@ -5,11 +5,12 @@ set WarningsHandlingFlags=-WX -W4 -wd4201 -wd4100 -wd4189 -wd4505
 set CommonCompilerFlags=-nologo -arch:AVX2 -EHa- -EHsc -FC -Gm- -GR- -Z7 %OptimOrDebugFlags% %WarningsHandlingFlags%
 set CommonCompilerDefines=-DSABLUJO_INTERNAL -DSABLUJO_SLOW -DSABLUJO_WIN32
 REM set CommonCompilerDefines=-DSABLUJO_WIN32
-set CommonLinkerFlags=-incremental:no -opt:ref
+set CommonLinkerFlags=
 
 set GameSourceFiles=..\source\sablujo.cpp ..\source\sablujo_maths.cpp ..\source\sablujo_geometry.cpp
 set GameCompilerFlags=-LD -Fmsablujo.map %CommonCompilerFlags% %CommonCompilerDefines%
-set GameLinkerFlags=-PDB:sablujo_%random%.pdb -EXPORT:GameUpdateAndRender %CommonLinkerFlags%
+@REM set GameLinkerFlags=-pdb-name:sablujo_%random%.pdb %CommonLinkerFlags%
+set GameLinkerFlags=
 
 set PlatformSourceFiles=..\source\win32_sablujo.cpp ..\source\dx12_renderer.cpp
 set PlatformCompilerFlags=-Fmwin32_sablujo.map %CommonCompilerFlags% %CommonCompilerDefines%
@@ -24,7 +25,7 @@ IF NOT EXIST ..\build mkdir ..\build
 pushd ..\build
 
 REM 64-bit build
-del sablujo_*.pdb > NUL 2> NUL
-cl %GameCompilerFlags% %GameSourceFiles% /link %GameLinkerFlags% 
-cl %PlatformCompilerFlags% %PlatformSourceFiles% /link %PlatformLinkerFlags%
+del *.pdb > NUL 2> nul
+odin build ..\source\platform\. -out:sablujo_platform.exe -debug
+odin build ..\source\game\. -build-mode:dll -out:sablujo.dll -debug %GameLinkerFlags%
 popd
